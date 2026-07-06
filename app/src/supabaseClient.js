@@ -142,6 +142,35 @@ export async function uploadMedia(file) {
     return { url: data.publicUrl, type: isVideo ? 'video' : 'image' };
 }
 
+// Profile picture — always stored at a fixed path per user (upsert) so
+// re-uploading replaces the old photo instead of piling up files.
+export async function updateAvatar(file) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    if (!file.type.startsWith('image/')) throw new Error('Profile photo must be an image');
+    if (file.size > MAX_MEDIA_BYTES) throw new Error('Image is larger than 25MB');
+
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${user.id}/avatar.${ext}`;
+
+    const { error: uploadErr } = await supabase.storage.from('media').upload(path, file, {
+        cacheControl: '3600',
+        upsert: true,
+        contentType: file.type,
+    });
+    if (uploadErr) throw uploadErr;
+
+    const { data } = supabase.storage.from('media').getPublicUrl(path);
+    const avatarUrl = `${data.publicUrl}?t=${Date.now()}`;
+
+    const { error: updateErr } = await supabase
+        .from('profiles').update({ avatar_url: avatarUrl }).eq('user_id', user.id);
+    if (updateErr) throw updateErr;
+
+    return avatarUrl;
+}
+
 // ---------------------------------------------------------------------------
 // 5. POSTS
 //    Pulls feed_posts + the user's reaction & bookmark & repost state in
@@ -218,6 +247,7 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
             display:    p.author_display,
             university: p.university,
             year:       p.year_of_study || '',
+            avatarUrl:  p.author_avatar_url || null,
         },
         createdAt:    new Date(p.created_at).getTime(),
         reactions:    rxByPost[p.post_id] || { like: 0, love: 0, laugh: 0, wow: 0, sad: 0, angry: 0 },
@@ -331,7 +361,7 @@ export async function fetchComments(postId) {
             user_id,
             media_url,
             media_type,
-            profiles:profiles!user_id ( username, display_name )
+            profiles:profiles!user_id ( username, display_name, avatar_url )
         `)
         .eq('post_id', postId)
         .order('created_at');
@@ -345,8 +375,9 @@ export async function fetchComments(postId) {
         createdAt: new Date(c.created_at).getTime(),
         media:    c.media_url ? { url: c.media_url, type: c.media_type } : null,
         author: {
-            username: c.profiles.username,
-            display:  c.profiles.display_name,
+            username:  c.profiles.username,
+            display:   c.profiles.display_name,
+            avatarUrl: c.profiles.avatar_url || null,
         },
     }));
 }

@@ -37,6 +37,8 @@ import {
   Link2,
   Image as ImageIcon,
   Paperclip,
+  Heart,
+  Camera,
 } from "lucide-react";
 import {
   getCurrentUser,
@@ -57,6 +59,7 @@ import {
   addComment,
   adminFetchUsers,
   adminBanUser,
+  updateAvatar,
 } from "./supabaseClient";
 
 // =====================================================================
@@ -329,15 +332,10 @@ const CATEGORIES = [
   },
 ];
 
-// Six FB-style reactions, mutually exclusive per user per post.
-const REACTIONS = [
-  { id: "like", emoji: "👍", label: "Like", color: "#00D4FF" },
-  { id: "love", emoji: "❤️", label: "Love", color: "#FF3366" },
-  { id: "laugh", emoji: "😂", label: "Haha", color: "#FFB800" },
-  { id: "wow", emoji: "😮", label: "Wow", color: "#B366FF" },
-  { id: "sad", emoji: "😢", label: "Sad", color: "#00FF88" },
-  { id: "angry", emoji: "😡", label: "Angry", color: "#FF3366" },
-];
+// Single Instagram-style like — reactions in the DB still carry a `type`
+// column for backward compatibility with older data, but the app only
+// ever writes "love" now.
+const LIKE_TYPE = "love";
 
 const UNIVERSITIES = [
   "Institute of Accountancy Arusha",
@@ -642,7 +640,6 @@ const formatNum = (n) => {
   return (n / 1000000).toFixed(1) + "M";
 };
 const getCategory = (id) => CATEGORIES.find((c) => c.id === id);
-const getReaction = (id) => REACTIONS.find((r) => r.id === id);
 const initials = (name = "") =>
   name
     .split(" ")
@@ -652,12 +649,6 @@ const initials = (name = "") =>
     .toUpperCase();
 const totalReactions = (post) =>
   Object.values(post.reactions).reduce((a, b) => a + b, 0);
-const topReactions = (post) =>
-  Object.entries(post.reactions)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 3)
-    .map(([id]) => id);
 
 // ---------- Global styles ----------
 const GlobalStyles = () => (
@@ -832,55 +823,6 @@ const GlobalStyles = () => (
       .eh-grid { grid-template-columns: 240px minmax(0, 1fr) 300px; }
     }
 
-    .eh-reaction-picker {
-      position: absolute;
-      bottom: calc(100% + 8px);
-      left: 0;
-      background: rgba(12, 18, 35, 0.9);
-      backdrop-filter: blur(20px) saturate(180%);
-      -webkit-backdrop-filter: blur(20px) saturate(180%);
-      border: 1px solid rgba(0, 240, 255, 0.15);
-      border-radius: 28px;
-      padding: 6px;
-      display: flex;
-      gap: 2px;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 240, 255, 0.06);
-      z-index: 30;
-    }
-    .eh-reaction-picker button {
-      font-size: 22px;
-      width: 36px; height: 36px;
-      display: flex; align-items: center; justify-content: center;
-      border-radius: 50%;
-      transition: transform .15s ease, background .15s ease;
-      line-height: 1;
-      background: transparent;
-    }
-    .eh-reaction-picker button:hover {
-      transform: scale(1.35) translateY(-4px);
-      background: rgba(0, 240, 255, 0.1);
-    }
-    .eh-reaction-picker .lbl {
-      position: absolute;
-      bottom: calc(100% + 6px);
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(0, 240, 255, 0.9);
-      color: #06080F;
-      font-family: 'JetBrains Mono', monospace;
-      font-size: 9px;
-      font-weight: 600;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      padding: 3px 8px;
-      border-radius: 4px;
-      white-space: nowrap;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity .15s;
-    }
-    .eh-reaction-picker button:hover .lbl { opacity: 1; }
-
     /* Holographic shimmer effect for special elements */
     .eh-holographic {
       background: linear-gradient(135deg, rgba(0,240,255,0.05), rgba(179,102,255,0.05), rgba(255,51,102,0.05), rgba(0,255,136,0.05));
@@ -929,7 +871,23 @@ const Logo = ({ size = 32 }) => (
   </div>
 );
 
-const Avatar = ({ name, size = 36 }) => {
+const Avatar = ({ name, size = 36, src }) => {
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        className="shrink-0"
+        style={{
+          width: size,
+          height: size,
+          borderRadius: 8,
+          objectFit: "cover",
+          border: "1px solid var(--glass-border)",
+        }}
+      />
+    );
+  }
   const palette = [
     ["#00F0FF", "rgba(0, 240, 255, 0.1)"],
     ["#B366FF", "rgba(179, 102, 255, 0.1)"],
@@ -1033,87 +991,37 @@ const Spinner = ({ size = 20, color = "var(--accent)" }) => (
 );
 
 // =====================================================================
-// REACTION PICKER
+// LIKE BUTTON — single Instagram-style heart, no emoji picker
 // =====================================================================
-const ReactionButton = ({ post, onReact }) => {
-  const [open, setOpen] = useState(false);
-  const closeTimer = useRef(null);
-  const current = post.userReaction ? getReaction(post.userReaction) : null;
-
-  const openPicker = () => {
-    clearTimeout(closeTimer.current);
-    setOpen(true);
-  };
-  const closePicker = () => {
-    closeTimer.current = setTimeout(() => setOpen(false), 200);
-  };
-
-  const handleClick = () => {
-    onReact(post.id, post.userReaction || "like");
-  };
-
-  const pick = (id) => {
-    onReact(post.id, id);
-    setOpen(false);
-  };
-
+const LikeButton = ({ post, onReact }) => {
+  const liked = !!post.userReaction;
   return (
-    <div
-      className="relative"
-      onMouseEnter={openPicker}
-      onMouseLeave={closePicker}
+    <button
+      onClick={() => onReact(post.id)}
+      className="flex items-center gap-1.5"
+      style={{
+        padding: "7px 11px",
+        borderRadius: 6,
+        fontSize: 12.5,
+        color: liked ? "#FF3366" : "var(--ink-2)",
+        fontWeight: liked ? 600 : 400,
+        fontFamily: "'Inter', sans-serif",
+        background: "transparent",
+        transition: "background .15s ease, color .15s ease",
+      }}
+      onMouseEnter={(e) =>
+        (e.currentTarget.style.background = "rgba(255, 51, 102, 0.06)")
+      }
+      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
     >
-      {open && (
-        <div
-          className="eh-reaction-picker eh-fade-in"
-          onMouseEnter={openPicker}
-          onMouseLeave={closePicker}
-        >
-          {REACTIONS.map((r) => (
-            <button
-              key={r.id}
-              onClick={() => pick(r.id)}
-              aria-label={r.label}
-              className="relative"
-            >
-              <span>{r.emoji}</span>
-              <span className="lbl">{r.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
-      <button
-        onClick={handleClick}
-        className="flex items-center gap-1.5"
-        style={{
-          padding: "7px 11px",
-          borderRadius: 6,
-          fontSize: 12.5,
-          color: current ? current.color : "var(--ink-2)",
-          fontWeight: current ? 600 : 400,
-          fontFamily: "'Inter', sans-serif",
-          background: "transparent",
-          transition: "background .15s ease, color .15s ease",
-        }}
-        onMouseEnter={(e) =>
-          (e.currentTarget.style.background = "rgba(0, 240, 255, 0.05)")
-        }
-        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-      >
-        {current ? (
-          <span style={{ fontSize: 16, lineHeight: 1 }}>{current.emoji}</span>
-        ) : (
-          <span style={{ fontSize: 14, opacity: 0.6 }}>👍</span>
-        )}
-        <span>{current ? current.label : "React"}</span>
-      </button>
-    </div>
+      <Heart size={15} strokeWidth={2.2} fill={liked ? "#FF3366" : "none"} />
+      <span>{liked ? "Liked" : "Like"}</span>
+    </button>
   );
 };
 
-const ReactionSummary = ({ post, onClick }) => {
+const LikeSummary = ({ post, onClick }) => {
   const total = totalReactions(post);
-  const top = topReactions(post);
   if (total === 0) return <div />;
   return (
     <button
@@ -1121,28 +1029,7 @@ const ReactionSummary = ({ post, onClick }) => {
       className="flex items-center gap-1.5"
       style={{ padding: "4px 0" }}
     >
-      <span className="flex" style={{ marginRight: 2 }}>
-        {top.map((id, i) => (
-          <span
-            key={id}
-            style={{
-              width: 18,
-              height: 18,
-              borderRadius: 9,
-              background: "var(--surface)",
-              border: "2px solid var(--bg)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontSize: 11,
-              marginLeft: i === 0 ? 0 : -6,
-              zIndex: 10 - i,
-            }}
-          >
-            {getReaction(id)?.emoji}
-          </span>
-        ))}
-      </span>
+      <Heart size={13} style={{ color: "#FF3366" }} fill="#FF3366" />
       <span
         className="font-body"
         style={{
@@ -1160,7 +1047,7 @@ const ReactionSummary = ({ post, onClick }) => {
 // =====================================================================
 // HEADER
 // =====================================================================
-const Header = ({ user, onLogout, onCreate, onNavigate }) => {
+const Header = ({ user, onLogout, onCreate, onNavigate, onOpenSettings }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   return (
     <header
@@ -1242,7 +1129,7 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
 
         <div className="relative">
           <button onClick={() => setMenuOpen((v) => !v)}>
-            <Avatar name={user.display} size={34} />
+            <Avatar name={user.display} size={34} src={user.avatarUrl} />
           </button>
           {menuOpen && (
             <>
@@ -1292,7 +1179,10 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
                 <MenuItem
                   icon={User}
                   label="Your Profile"
-                  onClick={() => setMenuOpen(false)}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onOpenSettings();
+                  }}
                 />
                 <MenuItem
                   icon={Bookmark}
@@ -1305,7 +1195,10 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
                 <MenuItem
                   icon={Settings}
                   label="Settings"
-                  onClick={() => setMenuOpen(false)}
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onOpenSettings();
+                  }}
                 />
                 {user.role === "admin" && (
                   <MenuItem
@@ -1723,7 +1616,7 @@ const PostCard = ({
     >
       <header className="flex items-start justify-between gap-3 mb-3">
         <div className="flex items-center gap-3">
-          <Avatar name={post.author.display} size={38} />
+          <Avatar name={post.author.display} size={38} src={post.author.avatarUrl} />
           <div>
             <div className="flex items-center gap-2 flex-wrap">
               <span
@@ -1789,7 +1682,7 @@ const PostCard = ({
         className="flex items-center justify-between mb-2.5"
         style={{ minHeight: 22 }}
       >
-        <ReactionSummary post={post} onClick={() => onOpen(post)} />
+        <LikeSummary post={post} onClick={() => onOpen(post)} />
         <div
           className="flex items-center gap-3 font-body"
           style={{ fontSize: 11.5, color: "var(--muted)" }}
@@ -1807,7 +1700,7 @@ const PostCard = ({
         style={{ borderTop: "1px solid var(--line-2)", paddingTop: 8 }}
       >
         <div className="flex items-center gap-1 flex-wrap">
-          <ReactionButton post={post} onReact={onReact} />
+          <LikeButton post={post} onReact={onReact} />
           <ActionBtn
             icon={MessageCircle}
             label="Comment"
@@ -2113,7 +2006,7 @@ const CommentNode = ({
       }}
     >
       <div className="flex gap-3">
-        <Avatar name={comment.author.display} size={depth > 0 ? 28 : 32} />
+        <Avatar name={comment.author.display} size={depth > 0 ? 28 : 32} src={comment.author.avatarUrl} />
         <div className="flex-1 min-w-0">
           <div className="eh-card" style={{ padding: "10px 13px" }}>
             <div className="flex items-center gap-2 mb-1 flex-wrap">
@@ -2172,7 +2065,7 @@ const CommentNode = ({
 
           {replyOpen && (
             <div className="flex gap-2 mt-2 eh-fade-in">
-              <Avatar name={currentUser.display} size={26} />
+              <Avatar name={currentUser.display} size={26} src={currentUser.avatarUrl} />
               <div className="flex-1">
                 <div className="flex gap-2">
                   <input
@@ -2316,7 +2209,7 @@ const PostDetail = ({
               borderBottom: "1px solid var(--line-2)",
             }}
           >
-            <Avatar name={post.author.display} size={40} />
+            <Avatar name={post.author.display} size={40} src={post.author.avatarUrl} />
             <div>
               <div
                 className="font-display"
@@ -2358,7 +2251,7 @@ const PostDetail = ({
             className="flex items-center justify-between flex-wrap gap-3 mt-6 pt-4"
             style={{ borderTop: "1px solid var(--line-2)" }}
           >
-            <ReactionSummary post={post} />
+            <LikeSummary post={post} />
             <div
               className="flex items-center gap-4 font-body"
               style={{ fontSize: 12, color: "var(--muted)" }}
@@ -2375,7 +2268,7 @@ const PostDetail = ({
             className="flex items-center gap-1 mt-3 flex-wrap"
             style={{ borderTop: "1px solid var(--line-2)", paddingTop: 12 }}
           >
-            <ReactionButton post={post} onReact={onReact} />
+            <LikeButton post={post} onReact={onReact} />
             <ActionBtn icon={MessageCircle} label="Comment" />
             <ActionBtn
               icon={Repeat2}
@@ -2417,7 +2310,7 @@ const PostDetail = ({
           <div className="eh-rule mb-5"></div>
 
           <div className="flex gap-3 mb-6">
-            <Avatar name={currentUser.display} size={36} />
+            <Avatar name={currentUser.display} size={36} src={currentUser.avatarUrl} />
             <div className="flex-1">
               <textarea
                 value={text}
@@ -2801,7 +2694,7 @@ const RepostModal = ({ post, onClose, onConfirm }) => {
             style={{ padding: 12, background: "rgba(6, 8, 15, 0.45)" }}
           >
             <div className="flex items-center gap-2 mb-1.5">
-              <Avatar name={post.author.display} size={24} />
+              <Avatar name={post.author.display} size={24} src={post.author.avatarUrl} />
               <span
                 className="font-display"
                 style={{ fontSize: 12.5, fontWeight: 600, color: "var(--ink)" }}
@@ -2941,6 +2834,174 @@ const ShareModal = ({ post, onClose, onCopy }) => {
 };
 
 // =====================================================================
+// PROFILE SETTINGS — upload/change profile picture
+// =====================================================================
+const ProfileSettingsModal = ({ user, onClose, onSaved }) => {
+  const inputRef = useRef(null);
+  const [file, setFile] = useState(null);
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const preview = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
+
+  const pickFile = (f) => {
+    if (!f.type.startsWith("image/")) {
+      setError("Please choose an image file");
+      return;
+    }
+    if (f.size > MAX_MEDIA_BYTES) {
+      setError("Image is larger than 25MB");
+      return;
+    }
+    setError("");
+    setFile(f);
+  };
+
+  const save = async () => {
+    if (!file || saving) return;
+    setSaving(true);
+    try {
+      const avatarUrl = await updateAvatar(file);
+      onSaved(avatarUrl);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
+      style={{
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "32px 16px",
+        overflowY: "auto",
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="eh-card w-full"
+        style={{ maxWidth: 420, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between"
+          style={{ padding: "16px 24px", borderBottom: "1px solid var(--line-2)" }}
+        >
+          <div
+            className="font-display"
+            style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}
+          >
+            Your profile
+          </div>
+          <button onClick={onClose}>
+            <X size={18} style={{ color: "var(--muted)" }} />
+          </button>
+        </div>
+
+        <div className="flex flex-col items-center" style={{ padding: 28 }}>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/*"
+            hidden
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) pickFile(f);
+              e.target.value = "";
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => inputRef.current?.click()}
+            className="relative"
+            style={{ width: 96, height: 96 }}
+          >
+            {preview || user.avatarUrl ? (
+              <img
+                src={preview || user.avatarUrl}
+                alt=""
+                style={{
+                  width: 96,
+                  height: 96,
+                  borderRadius: 999,
+                  objectFit: "cover",
+                  border: "1px solid var(--glass-border)",
+                }}
+              />
+            ) : (
+              <Avatar name={user.display} size={96} />
+            )}
+            <span
+              className="flex items-center justify-center"
+              style={{
+                position: "absolute",
+                bottom: 0,
+                right: 0,
+                width: 30,
+                height: 30,
+                borderRadius: 999,
+                background: "var(--accent)",
+                border: "2px solid var(--bg)",
+              }}
+            >
+              <Camera size={14} color="#06080F" />
+            </span>
+          </button>
+          <div
+            className="font-body mt-3"
+            style={{ fontSize: 12, color: "var(--muted)" }}
+          >
+            Tap the photo to choose a new one
+          </div>
+          {error && (
+            <div
+              className="font-body mt-2"
+              style={{ fontSize: 12, color: "var(--danger)" }}
+            >
+              {error}
+            </div>
+          )}
+
+          <div className="flex gap-2 mt-6 w-full">
+            <button
+              onClick={onClose}
+              disabled={saving}
+              className="eh-btn eh-btn-ghost text-sm flex-1"
+              style={{ padding: "9px 16px" }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={save}
+              disabled={!file || saving}
+              className="eh-btn eh-btn-primary text-sm flex-1 flex items-center justify-center gap-2"
+              style={{
+                padding: "9px 16px",
+                opacity: !file || saving ? 0.4 : 1,
+                cursor: !file || saving ? "not-allowed" : "pointer",
+              }}
+            >
+              {saving ? (
+                <>
+                  <Spinner size={13} color="#06080F" /> Saving…
+                </>
+              ) : (
+                "Save photo"
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =====================================================================
 // AUTH — login, register, forgot password, reset
 // =====================================================================
 const toUserShape = (res) => ({
@@ -2950,6 +3011,7 @@ const toUserShape = (res) => ({
   email: res.profile.email,
   university: res.profile.university,
   role: res.profile.role,
+  avatarUrl: res.profile.avatar_url || null,
 });
 
 const AuthView = ({ onLogin, toast, initialMode }) => {
@@ -3743,7 +3805,7 @@ const AdminOverview = ({ posts }) => {
             .slice(0, 5)
             .map((p) => (
               <div key={p.id} className="flex items-start gap-3">
-                <Avatar name={p.author.display} size={30} />
+                <Avatar name={p.author.display} size={30} src={p.author.avatarUrl} />
                 <div className="flex-1 min-w-0">
                   <div
                     className="font-display"
@@ -3916,7 +3978,7 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
             <tr key={u.id} style={{ borderBottom: "1px solid var(--glass-border)", transition: "background .15s ease" }} className="hover:bg-[rgba(0,240,255,0.02)]">
               <td style={{ padding: "14px 18px" }}>
                 <div className="flex items-center gap-2.5">
-                  <Avatar name={u.display} size={30} />
+                  <Avatar name={u.display} size={30} src={u.avatarUrl} />
                   <div>
                     <div
                       className="font-display"
@@ -4240,6 +4302,7 @@ export default function EchoHive() {
   const [creatingPost, setCreatingPost] = useState(false);
   const [repostTarget, setRepostTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const [showToast, toastNode] = useToast();
 
@@ -4284,21 +4347,27 @@ export default function EchoHive() {
     }
   }, [posts, selectedPost]);
 
-  const refreshFeed = async (cat) => {
+  const refreshFeed = async (cat, { silent = false } = {}) => {
     const slug =
       cat !== undefined
         ? cat
         : activeCategory === "all"
           ? null
           : activeCategory;
-    setFeedLoading(true);
+    if (!silent) setFeedLoading(true);
     try {
       setPosts(await fetchFeed({ categorySlug: slug || null }));
     } catch (e) {
       showToast(e.message);
     } finally {
-      setFeedLoading(false);
+      if (!silent) setFeedLoading(false);
     }
+  };
+
+  // Applies a local edit to one post without refetching the whole feed —
+  // keeps likes/comments/bookmarks snappy instead of reloading everything.
+  const patchPost = (postId, updater) => {
+    setPosts((prev) => prev.map((p) => (p.id === postId ? updater(p) : p)));
   };
 
   const handleCategoryChange = (cat) => {
@@ -4307,11 +4376,24 @@ export default function EchoHive() {
   };
 
   // ----- Actions -----
-  const handleReact = async (postId, type) => {
+  const handleReact = async (postId) => {
+    const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+    const wasLiked = !!post.userReaction;
+    const prevType = post.userReaction;
+    patchPost(postId, (p) => {
+      const reactions = { ...p.reactions };
+      if (wasLiked) {
+        reactions[prevType] = Math.max(0, (reactions[prevType] || 0) - 1);
+      } else {
+        reactions[LIKE_TYPE] = (reactions[LIKE_TYPE] || 0) + 1;
+      }
+      return { ...p, reactions, userReaction: wasLiked ? null : LIKE_TYPE };
+    });
     try {
-      await toggleReaction(postId, type);
-      refreshFeed();
+      await toggleReaction(postId, wasLiked ? prevType : LIKE_TYPE);
     } catch (e) {
+      patchPost(postId, () => post);
       showToast(e.message);
     }
   };
@@ -4319,8 +4401,8 @@ export default function EchoHive() {
   const handleDelete = async (postId) => {
     try {
       await deletePost(postId);
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
       if (selectedPost?.id === postId) setSelectedPost(null);
-      refreshFeed();
       showToast("Post deleted");
     } catch (e) {
       showToast(e.message);
@@ -4331,7 +4413,7 @@ export default function EchoHive() {
     try {
       await createPost({ title, content, categorySlug: category, mediaFiles });
       setCreatingPost(false);
-      refreshFeed();
+      refreshFeed(undefined, { silent: true });
       showToast("Posted to the feed");
     } catch (e) {
       showToast(e.message);
@@ -4345,7 +4427,9 @@ export default function EchoHive() {
       fetchComments(postId).then((c) =>
         setComments((prev) => ({ ...prev, [postId]: c })),
       );
-      if (parentId === null) refreshFeed();
+      if (parentId === null) {
+        patchPost(postId, (p) => ({ ...p, comments: p.comments + 1 }));
+      }
     } catch (e) {
       showToast(e.message);
     }
@@ -4353,11 +4437,14 @@ export default function EchoHive() {
 
   const handleBookmark = async (postId) => {
     const post = posts.find((p) => p.id === postId);
+    if (!post) return;
+    const wasBookmarked = post.isBookmarked;
+    patchPost(postId, (p) => ({ ...p, isBookmarked: !wasBookmarked }));
     try {
       await toggleBookmark(postId);
-      refreshFeed();
-      showToast(post?.isBookmarked ? "Removed from saved" : "Saved");
+      showToast(wasBookmarked ? "Removed from saved" : "Saved");
     } catch (e) {
+      patchPost(postId, (p) => ({ ...p, isBookmarked: wasBookmarked }));
       showToast(e.message);
     }
   };
@@ -4393,11 +4480,16 @@ export default function EchoHive() {
     const post = posts.find((p) => p.id === postId);
     if (!post) return;
     if (post.isReposted) {
+      patchPost(postId, (p) => ({
+        ...p,
+        isReposted: false,
+        reposts: Math.max(0, p.reposts - 1),
+      }));
       try {
         await toggleRepost(postId);
-        refreshFeed();
         showToast("Repost removed");
       } catch (e) {
+        patchPost(postId, (p) => ({ ...p, isReposted: true, reposts: p.reposts + 1 }));
         showToast(e.message);
       }
     } else {
@@ -4406,23 +4498,26 @@ export default function EchoHive() {
   };
 
   const confirmRepost = async (comment) => {
+    const postId = repostTarget.id;
+    patchPost(postId, (p) => ({ ...p, isReposted: true, reposts: p.reposts + 1 }));
     try {
-      await toggleRepost(repostTarget.id, comment);
+      await toggleRepost(postId, comment);
       setRepostTarget(null);
-      refreshFeed();
       showToast(comment ? "Reposted with your take" : "Reposted");
     } catch (e) {
+      patchPost(postId, (p) => ({ ...p, isReposted: false, reposts: Math.max(0, p.reposts - 1) }));
       showToast(e.message);
     }
   };
 
-  const handleOpenPost = async (post) => {
-    await recordView(post.id);
+  const handleOpenPost = (post) => {
     setSelectedPost(post);
     fetchComments(post.id).then((c) =>
       setComments((prev) => ({ ...prev, [post.id]: c })),
     );
-    refreshFeed();
+    recordView(post.id)
+      .then(() => patchPost(post.id, (p) => ({ ...p, views: p.views + 1 })))
+      .catch(() => {});
   };
 
   const handleBan = async (uid) => {
@@ -4495,6 +4590,7 @@ export default function EchoHive() {
         }}
         onCreate={() => setCreatingPost(true)}
         onNavigate={setView}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
@@ -4581,6 +4677,19 @@ export default function EchoHive() {
           post={shareTarget}
           onClose={() => setShareTarget(null)}
           onCopy={handleCopyLink}
+        />
+      )}
+
+      {settingsOpen && (
+        <ProfileSettingsModal
+          user={user}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={(avatarUrl) => {
+            setUser((prev) => ({ ...prev, avatarUrl }));
+            setSettingsOpen(false);
+            showToast("Profile photo updated");
+            refreshFeed(undefined, { silent: true });
+          }}
         />
       )}
 
