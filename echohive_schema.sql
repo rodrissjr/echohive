@@ -26,6 +26,7 @@ drop table if exists public.bookmarks           cascade;
 drop table if exists public.reposts             cascade;
 drop table if exists public.post_views          cascade;
 drop table if exists public.reactions           cascade;
+drop table if exists public.post_media          cascade;
 drop table if exists public.comments            cascade;
 drop table if exists public.posts               cascade;
 drop table if exists public.categories          cascade;
@@ -33,6 +34,7 @@ drop table if exists public.profiles            cascade;
 
 drop type  if exists public.user_role     cascade;
 drop type  if exists public.reaction_type cascade;
+drop type  if exists public.media_type    cascade;
 
 -- ---------------------------------------------------------------------------
 -- 1. ENUM TYPES
@@ -41,6 +43,9 @@ create type public.user_role as enum ('student', 'admin');
 
 -- Six reactions, FB-style. Mutually exclusive per user per post.
 create type public.reaction_type as enum ('like', 'love', 'laugh', 'wow', 'sad', 'angry');
+
+-- Attachments on posts/comments — images or short video clips.
+create type public.media_type as enum ('image', 'video');
 
 -- ---------------------------------------------------------------------------
 -- 2. PROFILES
@@ -103,6 +108,20 @@ create index posts_user_created_idx     on public.posts (user_id, created_at des
 create index posts_feed_idx             on public.posts (created_at desc) where is_deleted = false;
 
 -- ---------------------------------------------------------------------------
+-- 4b. POST MEDIA  (gallery of images/videos attached to a post)
+-- ---------------------------------------------------------------------------
+create table public.post_media (
+    media_id   bigserial          primary key,
+    post_id    bigint             not null references public.posts(post_id) on delete cascade,
+    url        text               not null,
+    type       public.media_type  not null,
+    position   int                not null default 0,
+    created_at timestamptz        not null default now()
+);
+
+create index post_media_post_idx on public.post_media (post_id, position);
+
+-- ---------------------------------------------------------------------------
 -- 5. COMMENTS  (with nested replies)
 -- ---------------------------------------------------------------------------
 create table public.comments (
@@ -112,7 +131,10 @@ create table public.comments (
     parent_comment_id bigint               references public.comments(comment_id) on delete cascade,
     content           text        not null check (char_length(content) between 1 and 2000),
     reply_count       int         not null default 0,
-    created_at        timestamptz not null default now()
+    media_url         text,
+    media_type        public.media_type,
+    created_at        timestamptz not null default now(),
+    check ((media_url is null) = (media_type is null))
 );
 
 create index comments_post_created_idx on public.comments (post_id, created_at);
@@ -283,6 +305,7 @@ create trigger on_auth_user_created after insert on auth.users
 alter table public.profiles    enable row level security;
 alter table public.categories  enable row level security;
 alter table public.posts       enable row level security;
+alter table public.post_media  enable row level security;
 alter table public.comments    enable row level security;
 alter table public.reactions   enable row level security;
 alter table public.post_views  enable row level security;
@@ -339,6 +362,27 @@ create policy "posts: admin moderate"
     on public.posts for all to authenticated
     using (public.is_admin()) with check (public.is_admin());
 
+-- POST MEDIA
+create policy "post_media: public read"
+    on public.post_media for select to anon, authenticated
+    using (exists (select 1 from public.posts p
+                   where p.post_id = post_media.post_id and p.is_deleted = false));
+create policy "post_media: author insert"
+    on public.post_media for insert to authenticated
+    with check (
+        exists (select 1 from public.posts p
+                where p.post_id = post_media.post_id
+                  and p.user_id = auth.uid())
+        and not public.is_banned()
+    );
+create policy "post_media: author delete"
+    on public.post_media for delete to authenticated
+    using (exists (select 1 from public.posts p
+                   where p.post_id = post_media.post_id and p.user_id = auth.uid()));
+create policy "post_media: admin moderate"
+    on public.post_media for all to authenticated
+    using (public.is_admin()) with check (public.is_admin());
+
 -- COMMENTS
 create policy "comments: public read"
     on public.comments for select to anon, authenticated
@@ -393,6 +437,39 @@ create policy "reposts: self update"
     using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "reposts: self delete"
     on public.reposts for delete to authenticated using (user_id = auth.uid());
+
+-- ============================================================================
+-- 12b. STORAGE — "media" bucket for post/comment image & video uploads
+-- ----------------------------------------------------------------------------
+-- Objects are stored under "<user_id>/<uuid>.<ext>" so ownership can be
+-- checked from the path alone. 50MB cap here is a backstop — the app itself
+-- also enforces a smaller client-side limit before upload.
+-- ============================================================================
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values (
+    'media', 'media', true, 52428800,
+    array['image/png','image/jpeg','image/gif','image/webp','video/mp4','video/webm','video/quicktime']
+)
+on conflict (id) do update
+set public = excluded.public,
+    file_size_limit = excluded.file_size_limit,
+    allowed_mime_types = excluded.allowed_mime_types;
+
+create policy "media: public read"
+    on storage.objects for select to anon, authenticated
+    using (bucket_id = 'media');
+
+create policy "media: owner upload"
+    on storage.objects for insert to authenticated
+    with check (
+        bucket_id = 'media'
+        and (storage.foldername(name))[1] = auth.uid()::text
+        and not public.is_banned()
+    );
+
+create policy "media: owner delete"
+    on storage.objects for delete to authenticated
+    using (bucket_id = 'media' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- ============================================================================
 -- 13. CONVENIENCE VIEWS

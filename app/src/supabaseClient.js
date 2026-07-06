@@ -115,6 +115,34 @@ export async function fetchCategories() {
 }
 
 // ---------------------------------------------------------------------------
+// 4b. MEDIA — uploads to the public "media" storage bucket
+// ---------------------------------------------------------------------------
+export const MAX_MEDIA_BYTES = 25 * 1024 * 1024; // 25MB per file
+
+export async function uploadMedia(file) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    const isVideo = file.type.startsWith('video/');
+    const isImage = file.type.startsWith('image/');
+    if (!isImage && !isVideo) throw new Error(`"${file.name}" is not an image or video`);
+    if (file.size > MAX_MEDIA_BYTES) throw new Error(`"${file.name}" is larger than 25MB`);
+
+    const ext = (file.name.split('.').pop() || (isVideo ? 'mp4' : 'jpg')).toLowerCase();
+    const path = `${user.id}/${crypto.randomUUID()}.${ext}`;
+
+    const { error } = await supabase.storage.from('media').upload(path, file, {
+        cacheControl: '3600',
+        upsert: false,
+        contentType: file.type,
+    });
+    if (error) throw error;
+
+    const { data } = supabase.storage.from('media').getPublicUrl(path);
+    return { url: data.publicUrl, type: isVideo ? 'video' : 'image' };
+}
+
+// ---------------------------------------------------------------------------
 // 5. POSTS
 //    Pulls feed_posts + the user's reaction & bookmark & repost state in
 //    parallel queries, then stitches them into the shape the React UI uses.
@@ -147,6 +175,17 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
         .from('post_reactions_view')
         .select('post_id, type, cnt')
         .in('post_id', postIds);
+
+    // Pull media attachments for every post in this page
+    const { data: mediaRows } = await supabase
+        .from('post_media')
+        .select('post_id, url, type, position')
+        .in('post_id', postIds)
+        .order('position');
+    const mediaByPost = {};
+    for (const m of (mediaRows || [])) {
+        (mediaByPost[m.post_id] ??= []).push({ url: m.url, type: m.type });
+    }
 
     // The current user's own reaction, bookmark, and repost state
     let userReactions = {}, userBookmarks = new Set(), userReposts = new Set();
@@ -183,6 +222,7 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
         createdAt:    new Date(p.created_at).getTime(),
         reactions:    rxByPost[p.post_id] || { like: 0, love: 0, laugh: 0, wow: 0, sad: 0, angry: 0 },
         userReaction: userReactions[p.post_id] || null,
+        media:        mediaByPost[p.post_id] || [],
         comments:     p.comment_count,
         views:        p.view_count,
         reposts:      p.repost_count,
@@ -191,7 +231,7 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
     }));
 }
 
-export async function createPost({ title, content, categorySlug }) {
+export async function createPost({ title, content, categorySlug, mediaFiles = [] }) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
 
@@ -204,6 +244,19 @@ export async function createPost({ title, content, categorySlug }) {
         .insert({ user_id: user.id, category_id: cat.category_id, title, content })
         .select().single();
     if (error) throw error;
+
+    if (mediaFiles.length) {
+        const uploaded = await Promise.all(mediaFiles.map(uploadMedia));
+        const rows = uploaded.map((m, i) => ({
+            post_id: data.post_id,
+            url: m.url,
+            type: m.type,
+            position: i,
+        }));
+        const { error: mediaErr } = await supabase.from('post_media').insert(rows);
+        if (mediaErr) throw mediaErr;
+    }
+
     return data;
 }
 
@@ -276,6 +329,8 @@ export async function fetchComments(postId) {
             created_at,
             parent_comment_id,
             user_id,
+            media_url,
+            media_type,
             profiles:profiles!user_id ( username, display_name )
         `)
         .eq('post_id', postId)
@@ -288,6 +343,7 @@ export async function fetchComments(postId) {
         parentId: c.parent_comment_id,
         content:  c.content,
         createdAt: new Date(c.created_at).getTime(),
+        media:    c.media_url ? { url: c.media_url, type: c.media_type } : null,
         author: {
             username: c.profiles.username,
             display:  c.profiles.display_name,
@@ -295,9 +351,11 @@ export async function fetchComments(postId) {
     }));
 }
 
-export async function addComment(postId, content, parentCommentId = null) {
+export async function addComment(postId, content, parentCommentId = null, mediaFile = null) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) throw new Error('Not authenticated');
+
+    const media = mediaFile ? await uploadMedia(mediaFile) : null;
 
     const { data, error } = await supabase
         .from('comments')
@@ -306,6 +364,8 @@ export async function addComment(postId, content, parentCommentId = null) {
             user_id: user.id,
             parent_comment_id: parentCommentId,
             content,
+            media_url: media?.url ?? null,
+            media_type: media?.type ?? null,
         })
         .select().single();
     if (error) throw error;

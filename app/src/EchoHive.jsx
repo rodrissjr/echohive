@@ -35,6 +35,8 @@ import {
   CornerDownRight,
   Send,
   Link2,
+  Image as ImageIcon,
+  Paperclip,
 } from "lucide-react";
 import {
   getCurrentUser,
@@ -61,39 +63,280 @@ import {
 // EchoHive — Your Voice. Your Campus.
 // =====================================================================
 
+// =====================================================================
+// MEDIA — shared attach/gallery helpers for posts + comments
+// =====================================================================
+const MAX_POST_MEDIA = 6;
+const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
+
+const validateMediaFile = (file) => {
+  if (!/^image\/|^video\//.test(file.type)) {
+    return `"${file.name}" isn't an image or video`;
+  }
+  if (file.size > MAX_MEDIA_BYTES) {
+    return `"${file.name}" is larger than 25MB`;
+  }
+  return null;
+};
+
+const MediaGallery = ({ items, onRemove, maxHeight = 340 }) => {
+  if (!items || items.length === 0) return null;
+  const cols = items.length === 1 ? 1 : 2;
+  return (
+    <div
+      className="grid gap-1.5"
+      style={{ gridTemplateColumns: `repeat(${cols}, 1fr)`, marginBottom: 12 }}
+    >
+      {items.map((m, i) => (
+        <div
+          key={i}
+          className="relative overflow-hidden"
+          style={{ borderRadius: 12, background: "rgba(255,255,255,0.03)" }}
+        >
+          {m.type === "video" ? (
+            <video
+              src={m.url}
+              controls
+              className="w-full block"
+              style={{ maxHeight, width: "100%", objectFit: "cover" }}
+            />
+          ) : (
+            <img
+              src={m.url}
+              alt=""
+              className="w-full block"
+              style={{ maxHeight, width: "100%", objectFit: "cover" }}
+            />
+          )}
+          {onRemove && (
+            <button
+              type="button"
+              onClick={() => onRemove(i)}
+              className="flex items-center justify-center"
+              style={{
+                position: "absolute",
+                top: 6,
+                right: 6,
+                width: 22,
+                height: 22,
+                borderRadius: 999,
+                background: "rgba(3, 4, 8, 0.75)",
+                color: "#fff",
+              }}
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+};
+
+// Multi-file picker used by the post composer.
+const MediaPicker = ({ items, onAdd, onRemove, max = MAX_POST_MEDIA }) => {
+  const inputRef = useRef(null);
+  const [error, setError] = useState("");
+
+  const handleFiles = (fileList) => {
+    const room = max - items.length;
+    if (room <= 0) {
+      setError(`You can attach up to ${max} files`);
+      return;
+    }
+    const accepted = [];
+    let err = "";
+    for (const file of Array.from(fileList).slice(0, room)) {
+      const fileErr = validateMediaFile(file);
+      if (fileErr) {
+        err = fileErr;
+        continue;
+      }
+      accepted.push({
+        file,
+        url: URL.createObjectURL(file),
+        type: file.type.startsWith("video/") ? "video" : "image",
+      });
+    }
+    setError(err);
+    if (accepted.length) onAdd(accepted);
+  };
+
+  return (
+    <div className="mb-4">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,video/*"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files?.length) handleFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <MediaGallery items={items} onRemove={onRemove} />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={items.length >= max}
+          className="eh-btn eh-btn-ghost text-sm flex items-center gap-1.5"
+          style={{
+            padding: "7px 14px",
+            opacity: items.length >= max ? 0.4 : 1,
+            cursor: items.length >= max ? "not-allowed" : "pointer",
+          }}
+        >
+          <ImageIcon size={13} /> Photo/video
+        </button>
+        <span
+          className="font-body"
+          style={{ fontSize: 11, color: "var(--muted)" }}
+        >
+          {items.length}/{max}
+        </span>
+      </div>
+      {error && (
+        <div
+          className="font-body mt-1.5"
+          style={{ fontSize: 11.5, color: "var(--danger)" }}
+        >
+          {error}
+        </div>
+      )}
+    </div>
+  );
+};
+
+// Single-file attach button used by comment/reply composers.
+const SingleMediaAttach = ({ file, onPick, onClear }) => {
+  const inputRef = useRef(null);
+  const [error, setError] = useState("");
+
+  const preview = useMemo(() => {
+    if (!file) return null;
+    return {
+      url: URL.createObjectURL(file),
+      type: file.type.startsWith("video/") ? "video" : "image",
+    };
+  }, [file]);
+
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview.url);
+    };
+  }, [preview]);
+
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*,video/*"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) {
+            const err = validateMediaFile(f);
+            if (err) setError(err);
+            else {
+              setError("");
+              onPick(f);
+            }
+          }
+          e.target.value = "";
+        }}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        title="Attach photo or video"
+        className="flex items-center justify-center"
+        style={{ padding: 6, color: "var(--muted)" }}
+      >
+        <Paperclip size={14} />
+      </button>
+      {preview && (
+        <div className="relative" style={{ width: 36, height: 36 }}>
+          {preview.type === "video" ? (
+            <video
+              src={preview.url}
+              className="w-full h-full"
+              style={{ borderRadius: 6, objectFit: "cover" }}
+            />
+          ) : (
+            <img
+              src={preview.url}
+              alt=""
+              className="w-full h-full"
+              style={{ borderRadius: 6, objectFit: "cover" }}
+            />
+          )}
+          <button
+            type="button"
+            onClick={onClear}
+            className="flex items-center justify-center"
+            style={{
+              position: "absolute",
+              top: -6,
+              right: -6,
+              width: 15,
+              height: 15,
+              borderRadius: 999,
+              background: "rgba(3, 4, 8, 0.85)",
+              color: "#fff",
+            }}
+          >
+            <X size={9} />
+          </button>
+        </div>
+      )}
+      {error && (
+        <span
+          className="font-body"
+          style={{ fontSize: 11, color: "var(--danger)" }}
+        >
+          {error}
+        </span>
+      )}
+    </div>
+  );
+};
+
 const CATEGORIES = [
   {
     id: "academics",
     name: "Academics",
     icon: GraduationCap,
-    color: "#1E5F8E",
-    bg: "#E8F1F8",
+    color: "#00D4FF",
+    bg: "rgba(0, 212, 255, 0.08)",
   },
-  { id: "hostel", name: "Hostel", icon: Home, color: "#A16207", bg: "#FDF6E3" },
+  { id: "hostel", name: "Hostel", icon: Home, color: "#FFB800", bg: "rgba(255, 184, 0, 0.08)" },
   {
     id: "events",
     name: "Events",
     icon: Calendar,
-    color: "#5B3A9B",
-    bg: "#F1EBF9",
+    color: "#B366FF",
+    bg: "rgba(179, 102, 255, 0.08)",
   },
   {
     id: "complaints",
     name: "Complaints",
     icon: AlertCircle,
-    color: "#9B2C2C",
-    bg: "#FBEBEB",
+    color: "#FF3366",
+    bg: "rgba(255, 51, 102, 0.08)",
   },
 ];
 
 // Six FB-style reactions, mutually exclusive per user per post.
 const REACTIONS = [
-  { id: "like", emoji: "👍", label: "Like", color: "#1E5F8E" },
-  { id: "love", emoji: "❤️", label: "Love", color: "#9B2C2C" },
-  { id: "laugh", emoji: "😂", label: "Haha", color: "#A16207" },
-  { id: "wow", emoji: "😮", label: "Wow", color: "#5B3A9B" },
-  { id: "sad", emoji: "😢", label: "Sad", color: "#2F6B4F" },
-  { id: "angry", emoji: "😡", label: "Angry", color: "#9B2C2C" },
+  { id: "like", emoji: "👍", label: "Like", color: "#00D4FF" },
+  { id: "love", emoji: "❤️", label: "Love", color: "#FF3366" },
+  { id: "laugh", emoji: "😂", label: "Haha", color: "#FFB800" },
+  { id: "wow", emoji: "😮", label: "Wow", color: "#B366FF" },
+  { id: "sad", emoji: "😢", label: "Sad", color: "#00FF88" },
+  { id: "angry", emoji: "😡", label: "Angry", color: "#FF3366" },
 ];
 
 const UNIVERSITIES = [
@@ -419,82 +662,163 @@ const topReactions = (post) =>
 // ---------- Global styles ----------
 const GlobalStyles = () => (
   <style>{`
-    @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@300;400;500;700&display=swap');
-
     :root {
-      --bg:          #FAF8F3;
-      --surface:     #FFFFFF;
-      --ink:         #151412;
-      --ink-2:       #3F3D39;
-      --muted:       #7A7770;
-      --line:        #E8E2D4;
-      --line-2:      #F0EBDE;
-      --accent:      #C8872A;
-      --accent-deep: #95641A;
-      --accent-soft: #FAEFD8;
-      --success:     #2F6B4F;
-      --danger:      #9B2C2C;
+      --bg:          #06080F;
+      --bg-elevated: #0A0E1A;
+      --surface:     rgba(12, 18, 35, 0.65);
+      --surface-solid: #0C1223;
+      --ink:         #E8ECF4;
+      --ink-2:       #94A3C4;
+      --muted:       #506080;
+      --line:        rgba(0, 240, 255, 0.08);
+      --line-2:      rgba(0, 240, 255, 0.04);
+      --accent:      #00F0FF;
+      --accent-deep: #00C8D6;
+      --accent-soft: rgba(0, 240, 255, 0.08);
+      --success:     #00FF88;
+      --danger:      #FF3366;
+      --neon-magenta: #FF3399;
+      --glow:        rgba(0, 240, 255, 0.15);
+      --glass-border: rgba(0, 240, 255, 0.1);
+      --grid-color:  rgba(0, 240, 255, 0.025);
     }
 
-    .eh-root { font-family: 'Roboto', system-ui, sans-serif; color: var(--ink); background: var(--bg); }
-    .font-display { font-family: 'Poppins', system-ui, sans-serif; letter-spacing: -0.01em; }
-    .font-body    { font-family: 'Roboto', system-ui, sans-serif; }
+    .eh-root {
+      font-family: 'Inter', system-ui, -apple-system, sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+    }
+    .font-display { font-family: 'Inter', system-ui, sans-serif; letter-spacing: -0.02em; }
+    .font-body    { font-family: 'Inter', system-ui, sans-serif; letter-spacing: -0.005em; }
+    .font-mono    { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
 
     .hex-texture {
       background-color: var(--bg);
       background-image:
-        radial-gradient(circle at 20% 30%, rgba(200,135,42,0.04) 0%, transparent 40%),
-        radial-gradient(circle at 80% 70%, rgba(200,135,42,0.03) 0%, transparent 40%);
+        linear-gradient(var(--grid-color) 1px, transparent 1px),
+        linear-gradient(90deg, var(--grid-color) 1px, transparent 1px),
+        radial-gradient(ellipse at 20% 20%, rgba(0, 240, 255, 0.03) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(179, 102, 255, 0.02) 0%, transparent 50%),
+        radial-gradient(ellipse at 50% 50%, rgba(255, 51, 102, 0.01) 0%, transparent 60%);
+      background-size: 60px 60px, 60px 60px, 100% 100%, 100% 100%, 100% 100%;
+      background-position: -1px -1px;
     }
 
     .eh-card {
       background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 4px;
-      transition: border-color .18s ease, box-shadow .18s ease;
+      backdrop-filter: blur(16px) saturate(180%);
+      -webkit-backdrop-filter: blur(16px) saturate(180%);
+      border: 1px solid var(--glass-border);
+      border-radius: 12px;
+      transition: border-color .25s ease, box-shadow .25s ease, transform .25s ease;
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.02), inset 0 1px 0 rgba(255,255,255,0.03);
     }
-    .eh-card:hover { border-color: #D8CEB4; }
+    .eh-card:hover {
+      border-color: rgba(0, 240, 255, 0.2);
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.05), 0 0 60px rgba(0, 240, 255, 0.02), inset 0 1px 0 rgba(255,255,255,0.04);
+    }
 
     .eh-btn {
-      font-family: 'Poppins', sans-serif;
-      font-weight: 500;
+      font-family: 'Inter', sans-serif;
+      font-weight: 600;
       letter-spacing: 0.01em;
-      border-radius: 3px;
-      transition: all .15s ease;
+      border-radius: 8px;
+      transition: all .2s ease;
+      position: relative;
+      overflow: hidden;
     }
-    .eh-btn-primary { background: var(--ink); color: var(--bg); }
-    .eh-btn-primary:hover { background: #000; transform: translateY(-1px); }
-    .eh-btn-accent { background: var(--accent); color: #fff; }
-    .eh-btn-accent:hover { background: var(--accent-deep); }
-    .eh-btn-ghost { background: transparent; color: var(--ink-2); border: 1px solid var(--line); }
-    .eh-btn-ghost:hover { background: var(--line-2); border-color: #D8CEB4; }
+    .eh-btn::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 50%);
+      pointer-events: none;
+    }
+    .eh-btn-primary {
+      background: linear-gradient(135deg, var(--accent) 0%, var(--accent-deep) 100%);
+      color: #06080F;
+      box-shadow: 0 0 20px rgba(0, 240, 255, 0.15);
+    }
+    .eh-btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 0 30px rgba(0, 240, 255, 0.3), 0 4px 16px rgba(0, 240, 255, 0.15);
+    }
+    .eh-btn-accent {
+      background: linear-gradient(135deg, var(--accent) 0%, #00B8FF 100%);
+      color: #06080F;
+      box-shadow: 0 0 15px rgba(0, 240, 255, 0.12);
+    }
+    .eh-btn-accent:hover {
+      box-shadow: 0 0 25px rgba(0, 240, 255, 0.25);
+      transform: translateY(-1px);
+    }
+    .eh-btn-ghost {
+      background: rgba(0, 240, 255, 0.04);
+      color: var(--ink-2);
+      border: 1px solid var(--glass-border);
+    }
+    .eh-btn-ghost:hover {
+      background: rgba(0, 240, 255, 0.08);
+      border-color: rgba(0, 240, 255, 0.2);
+      color: var(--ink);
+    }
 
     .eh-input {
-      font-family: 'Roboto', sans-serif;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 3px;
-      transition: border-color .15s ease, box-shadow .15s ease;
+      font-family: 'Inter', sans-serif;
+      background: rgba(6, 8, 15, 0.6);
+      border: 1px solid var(--glass-border);
+      border-radius: 8px;
+      transition: border-color .2s ease, box-shadow .2s ease;
+      color: var(--ink);
+    }
+    .eh-input::placeholder {
+      color: var(--muted);
     }
     .eh-input:focus {
       outline: none;
-      border-color: var(--ink);
-      box-shadow: 0 0 0 3px rgba(21,20,18,0.06);
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(0, 240, 255, 0.08), 0 0 20px rgba(0, 240, 255, 0.06);
     }
 
-    @keyframes eh-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
-    .eh-fade-up { animation: eh-fade-up .38s ease both; }
+    @keyframes eh-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    .eh-fade-up { animation: eh-fade-up .45s cubic-bezier(0.16, 1, 0.3, 1) both; }
     @keyframes eh-fade-in { from { opacity: 0; } to { opacity: 1; } }
-    .eh-fade-in { animation: eh-fade-in .22s ease both; }
-    @keyframes eh-pop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.15); opacity: 1; } 100% { transform: scale(1); } }
-    .eh-pop { animation: eh-pop .25s cubic-bezier(.34,1.56,.64,1) both; }
+    .eh-fade-in { animation: eh-fade-in .25s ease both; }
+    @keyframes eh-pop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
+    .eh-pop { animation: eh-pop .3s cubic-bezier(.34,1.56,.64,1) both; }
     @keyframes eh-spin { to { transform: rotate(360deg); } }
 
-    .eh-scroll::-webkit-scrollbar { width: 8px; }
-    .eh-scroll::-webkit-scrollbar-track { background: transparent; }
-    .eh-scroll::-webkit-scrollbar-thumb { background: #D8CEB4; border-radius: 4px; }
+    @keyframes eh-glow-pulse {
+      0%, 100% { box-shadow: 0 0 15px rgba(0, 240, 255, 0.08); }
+      50% { box-shadow: 0 0 30px rgba(0, 240, 255, 0.15); }
+    }
+    .eh-glow-pulse { animation: eh-glow-pulse 3s ease-in-out infinite; }
 
-    .eh-rule { display: inline-block; width: 28px; height: 2px; background: var(--accent); }
+    @keyframes eh-border-glow {
+      0%, 100% { border-color: rgba(0, 240, 255, 0.08); }
+      50% { border-color: rgba(0, 240, 255, 0.2); }
+    }
+
+    @keyframes eh-shimmer {
+      0% { background-position: -200% center; }
+      100% { background-position: 200% center; }
+    }
+
+    @keyframes eh-neon-flicker {
+      0%, 100% { opacity: 1; }
+      92% { opacity: 1; }
+      93% { opacity: 0.8; }
+      94% { opacity: 1; }
+      96% { opacity: 0.9; }
+      97% { opacity: 1; }
+    }
+
+    .eh-scroll::-webkit-scrollbar { width: 6px; }
+    .eh-scroll::-webkit-scrollbar-track { background: transparent; }
+    .eh-scroll::-webkit-scrollbar-thumb { background: rgba(0, 240, 255, 0.12); border-radius: 3px; }
+    .eh-scroll::-webkit-scrollbar-thumb:hover { background: rgba(0, 240, 255, 0.25); }
+
+    .eh-rule { display: inline-block; width: 32px; height: 2px; background: linear-gradient(90deg, var(--accent), transparent); border-radius: 1px; }
 
     .eh-grid {
       display: grid;
@@ -502,23 +826,25 @@ const GlobalStyles = () => (
       gap: 32px;
     }
     @media (min-width: 1024px) {
-      .eh-grid { grid-template-columns: 220px minmax(0, 1fr); }
+      .eh-grid { grid-template-columns: 240px minmax(0, 1fr); }
     }
     @media (min-width: 1280px) {
-      .eh-grid { grid-template-columns: 220px minmax(0, 1fr) 280px; }
+      .eh-grid { grid-template-columns: 240px minmax(0, 1fr) 300px; }
     }
 
     .eh-reaction-picker {
       position: absolute;
       bottom: calc(100% + 8px);
       left: 0;
-      background: var(--surface);
-      border: 1px solid var(--line);
+      background: rgba(12, 18, 35, 0.9);
+      backdrop-filter: blur(20px) saturate(180%);
+      -webkit-backdrop-filter: blur(20px) saturate(180%);
+      border: 1px solid rgba(0, 240, 255, 0.15);
       border-radius: 28px;
       padding: 6px;
       display: flex;
       gap: 2px;
-      box-shadow: 0 8px 24px rgba(21,20,18,0.12);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), 0 0 20px rgba(0, 240, 255, 0.06);
       z-index: 30;
     }
     .eh-reaction-picker button {
@@ -526,48 +852,67 @@ const GlobalStyles = () => (
       width: 36px; height: 36px;
       display: flex; align-items: center; justify-content: center;
       border-radius: 50%;
-      transition: transform .15s ease;
+      transition: transform .15s ease, background .15s ease;
       line-height: 1;
       background: transparent;
     }
     .eh-reaction-picker button:hover {
       transform: scale(1.35) translateY(-4px);
-      background: var(--line-2);
+      background: rgba(0, 240, 255, 0.1);
     }
     .eh-reaction-picker .lbl {
       position: absolute;
       bottom: calc(100% + 6px);
       left: 50%;
       transform: translateX(-50%);
-      background: var(--ink);
-      color: var(--bg);
-      font-family: 'Poppins', sans-serif;
-      font-size: 10px;
-      font-weight: 500;
-      letter-spacing: 0.04em;
+      background: rgba(0, 240, 255, 0.9);
+      color: #06080F;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
       text-transform: uppercase;
       padding: 3px 8px;
-      border-radius: 2px;
+      border-radius: 4px;
       white-space: nowrap;
       opacity: 0;
       pointer-events: none;
       transition: opacity .15s;
     }
     .eh-reaction-picker button:hover .lbl { opacity: 1; }
+
+    /* Holographic shimmer effect for special elements */
+    .eh-holographic {
+      background: linear-gradient(135deg, rgba(0,240,255,0.05), rgba(179,102,255,0.05), rgba(255,51,102,0.05), rgba(0,255,136,0.05));
+      background-size: 400% 400%;
+      animation: eh-shimmer 8s ease infinite;
+    }
+
+    /* Glow text utility */
+    .eh-text-glow {
+      text-shadow: 0 0 10px rgba(0, 240, 255, 0.3), 0 0 30px rgba(0, 240, 255, 0.1);
+    }
   `}</style>
 );
 
 // ---------- Logo / Avatar / CategoryChip ----------
 const Logo = ({ size = 32 }) => (
   <div className="flex items-center gap-2.5" aria-label="EchoHive">
-    <div style={{ width: size, height: size }}>
+    <div style={{ width: size, height: size, filter: 'drop-shadow(0 0 6px rgba(0, 240, 255, 0.3))' }}>
       <svg viewBox="0 0 32 32" width={size} height={size} fill="none">
-        <path d="M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z" fill="#151412" />
+        <defs>
+          <linearGradient id="hex-glow" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%" stopColor="#00F0FF" />
+            <stop offset="100%" stopColor="#B366FF" />
+          </linearGradient>
+        </defs>
+        <path d="M16 2 L28 9 L28 23 L16 30 L4 23 L4 9 Z" fill="#0A0E1A" stroke="url(#hex-glow)" strokeWidth="0.5" />
         <path
           d="M16 8 L22 11.5 L22 20.5 L16 24 L10 20.5 L10 11.5 Z"
-          fill="#C8872A"
+          fill="url(#hex-glow)"
+          opacity="0.9"
         />
-        <circle cx="16" cy="16" r="2.2" fill="#FAF8F3" />
+        <circle cx="16" cy="16" r="2.2" fill="#E8ECF4" />
       </svg>
     </div>
     <div
@@ -575,23 +920,23 @@ const Logo = ({ size = 32 }) => (
       style={{
         fontWeight: 700,
         fontSize: 18,
-        letterSpacing: "-0.02em",
+        letterSpacing: "-0.03em",
         color: "var(--ink)",
       }}
     >
-      Echo<span style={{ color: "var(--accent)" }}>Hive</span>
+      Echo<span style={{ color: "var(--accent)", textShadow: '0 0 12px rgba(0, 240, 255, 0.4)' }}>Hive</span>
     </div>
   </div>
 );
 
 const Avatar = ({ name, size = 36 }) => {
   const palette = [
-    ["#1E5F8E", "#E8F1F8"],
-    ["#A16207", "#FDF6E3"],
-    ["#5B3A9B", "#F1EBF9"],
-    ["#2F6B4F", "#E8F2EC"],
-    ["#9B2C2C", "#FBEBEB"],
-    ["#C8872A", "#FAEFD8"],
+    ["#00F0FF", "rgba(0, 240, 255, 0.1)"],
+    ["#B366FF", "rgba(179, 102, 255, 0.1)"],
+    ["#00FF88", "rgba(0, 255, 136, 0.1)"],
+    ["#FFB800", "rgba(255, 184, 0, 0.1)"],
+    ["#FF3366", "rgba(255, 51, 102, 0.1)"],
+    ["#00B8FF", "rgba(0, 184, 255, 0.1)"],
   ];
   const h = (name || "X").charCodeAt(0) % palette.length;
   const [fg, bg] = palette[h];
@@ -605,7 +950,9 @@ const Avatar = ({ name, size = 36 }) => {
         color: fg,
         fontSize: size * 0.38,
         fontWeight: 600,
-        borderRadius: 2,
+        borderRadius: 8,
+        border: `1px solid ${fg}22`,
+        boxShadow: `0 0 10px ${fg}15`,
       }}
     >
       {initials(name)}
@@ -619,16 +966,18 @@ const CategoryChip = ({ categoryId, compact = false }) => {
   const Icon = cat.icon;
   return (
     <span
-      className="font-display inline-flex items-center gap-1.5"
+      className="font-mono inline-flex items-center gap-1.5"
       style={{
         color: cat.color,
         background: cat.bg,
-        fontSize: compact ? 11 : 12,
+        fontSize: compact ? 10 : 11,
         fontWeight: 600,
         padding: compact ? "3px 8px" : "4px 10px",
-        borderRadius: 2,
-        letterSpacing: "0.03em",
+        borderRadius: 6,
+        letterSpacing: "0.06em",
         textTransform: "uppercase",
+        border: `1px solid ${cat.color}20`,
+        boxShadow: `0 0 8px ${cat.color}10`,
       }}
     >
       <Icon size={compact ? 11 : 12} strokeWidth={2.4} />
@@ -648,15 +997,18 @@ const useToast = () => {
     <div
       className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] eh-pop"
       style={{
-        background: "var(--ink)",
-        color: "var(--bg)",
+        background: "rgba(12, 18, 35, 0.9)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
+        color: "var(--ink)",
         padding: "10px 18px",
-        borderRadius: 3,
+        borderRadius: 8,
         fontSize: 13,
-        fontFamily: "'Poppins', sans-serif",
+        fontFamily: "'Inter', sans-serif",
         fontWeight: 500,
-        letterSpacing: "0.02em",
-        boxShadow: "0 8px 24px rgba(21,20,18,0.2)",
+        letterSpacing: "0.01em",
+        border: "1px solid rgba(0, 240, 255, 0.15)",
+        boxShadow: "0 8px 32px rgba(0,0,0,0.4), 0 0 20px rgba(0, 240, 255, 0.08)",
       }}
     >
       {msg}
@@ -670,11 +1022,12 @@ const Spinner = ({ size = 20, color = "var(--accent)" }) => (
     style={{
       width: size,
       height: size,
-      border: `2px solid var(--line)`,
+      border: `2px solid rgba(0, 240, 255, 0.1)`,
       borderTopColor: color,
       borderRadius: "50%",
       animation: "eh-spin .7s linear infinite",
       flexShrink: 0,
+      boxShadow: `0 0 8px ${color}30`,
     }}
   />
 );
@@ -734,18 +1087,16 @@ const ReactionButton = ({ post, onReact }) => {
         className="flex items-center gap-1.5"
         style={{
           padding: "7px 11px",
-          borderRadius: 2,
+          borderRadius: 6,
           fontSize: 12.5,
           color: current ? current.color : "var(--ink-2)",
           fontWeight: current ? 600 : 400,
-          fontFamily: current
-            ? "'Poppins', sans-serif"
-            : "'Roboto', sans-serif",
+          fontFamily: "'Inter', sans-serif",
           background: "transparent",
           transition: "background .15s ease, color .15s ease",
         }}
         onMouseEnter={(e) =>
-          (e.currentTarget.style.background = "var(--line-2)")
+          (e.currentTarget.style.background = "rgba(0, 240, 255, 0.05)")
         }
         onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
       >
@@ -814,8 +1165,11 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
   return (
     <header
       style={{
-        background: "var(--surface)",
-        borderBottom: "1px solid var(--line)",
+        background: "rgba(6, 8, 15, 0.8)",
+        backdropFilter: "blur(20px) saturate(180%)",
+        WebkitBackdropFilter: "blur(20px) saturate(180%)",
+        borderBottom: "1px solid var(--glass-border)",
+        boxShadow: "0 1px 30px rgba(0, 240, 255, 0.03)",
         position: "sticky",
         top: 0,
         zIndex: 40,
@@ -832,10 +1186,11 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
         <div
           className="hidden md:flex items-center gap-1 flex-1 max-w-md"
           style={{
-            background: "var(--bg)",
-            border: "1px solid var(--line)",
-            borderRadius: 3,
-            padding: "7px 12px",
+            background: "rgba(0, 240, 255, 0.03)",
+            border: "1px solid var(--glass-border)",
+            borderRadius: 8,
+            padding: "8px 14px",
+            transition: "border-color .2s ease, box-shadow .2s ease",
           }}
         >
           <Search size={15} style={{ color: "var(--muted)" }} />
@@ -864,19 +1219,20 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
           <Plus size={16} strokeWidth={2.5} />
         </button>
 
-        <button className="relative" aria-label="Notifications">
+        <button className="relative" aria-label="Notifications" style={{ padding: 6 }}>
           <Bell size={18} style={{ color: "var(--ink-2)" }} />
           <span
-            className="absolute -top-1 -right-1 font-display flex items-center justify-center"
+            className="absolute -top-0.5 -right-0.5 font-mono flex items-center justify-center eh-glow-pulse"
             style={{
-              background: "var(--accent)",
+              background: "var(--danger)",
               color: "white",
               minWidth: 16,
               height: 16,
               borderRadius: 8,
-              fontSize: 10,
-              fontWeight: 600,
+              fontSize: 9,
+              fontWeight: 700,
               padding: "0 4px",
+              boxShadow: "0 0 8px rgba(255, 51, 102, 0.4)",
             }}
           >
             3
@@ -896,15 +1252,16 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
               <div
                 className="absolute right-0 mt-2 eh-card eh-fade-in"
                 style={{
-                  width: 240,
+                  width: 260,
                   zIndex: 20,
                   padding: 6,
-                  boxShadow: "0 8px 24px rgba(21,20,18,0.08)",
+                  background: "rgba(12, 18, 35, 0.95)",
+                  boxShadow: "0 8px 40px rgba(0,0,0,0.5), 0 0 20px rgba(0, 240, 255, 0.04)",
                 }}
               >
                 <div
                   style={{
-                    padding: "10px 12px",
+                    padding: "12px 14px",
                     borderBottom: "1px solid var(--line-2)",
                   }}
                 >
@@ -963,7 +1320,7 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
                 <div
                   style={{
                     height: 1,
-                    background: "var(--line-2)",
+                    background: "var(--glass-border)",
                     margin: "4px 0",
                   }}
                 />
@@ -991,17 +1348,18 @@ const MenuItem = ({ icon: Icon, label, onClick, highlight, danger }) => (
     className="flex items-center gap-2.5 w-full text-left"
     style={{
       padding: "8px 12px",
-      borderRadius: 2,
+      borderRadius: 6,
       fontSize: 13,
       color: danger
         ? "var(--danger)"
         : highlight
-          ? "var(--accent-deep)"
+          ? "var(--accent)"
           : "var(--ink-2)",
       fontWeight: highlight ? 600 : 400,
-      fontFamily: highlight ? "'Poppins', sans-serif" : "'Roboto', sans-serif",
+      fontFamily: "'Inter', sans-serif",
+      transition: "background .15s ease",
     }}
-    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--line-2)")}
+    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 240, 255, 0.06)")}
     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
   >
     <Icon size={15} strokeWidth={2} />
@@ -1127,14 +1485,15 @@ const SidebarItem = ({ label, icon: Icon, color, count, active, onClick }) => (
     onClick={onClick}
     className="w-full flex items-center justify-between text-left"
     style={{
-      padding: "9px 10px",
-      borderRadius: 2,
-      background: active ? "var(--accent-soft)" : "transparent",
-      borderLeft: `2px solid ${active ? "var(--accent)" : "transparent"}`,
-      transition: "background .15s ease",
+      padding: "10px 14px",
+      borderRadius: 8,
+      background: active ? "rgba(0, 240, 255, 0.08)" : "transparent",
+      borderLeft: `3px solid ${active ? "var(--accent)" : "transparent"}`,
+      transition: "background .15s ease, border-color .15s ease",
+      boxShadow: active ? "0 0 15px rgba(0, 240, 255, 0.05)" : "none",
     }}
     onMouseEnter={(e) => {
-      if (!active) e.currentTarget.style.background = "var(--line-2)";
+      if (!active) e.currentTarget.style.background = "rgba(0, 240, 255, 0.04)";
     }}
     onMouseLeave={(e) => {
       if (!active) e.currentTarget.style.background = "transparent";
@@ -1144,25 +1503,28 @@ const SidebarItem = ({ label, icon: Icon, color, count, active, onClick }) => (
       <Icon
         size={15}
         strokeWidth={2}
-        style={{ color: color || "var(--ink-2)" }}
+        style={{
+          color: color || "var(--ink-2)",
+          filter: active && color ? `drop-shadow(0 0 4px ${color})` : "none",
+        }}
       />
       <span
         className="font-display"
         style={{
           fontSize: 13.5,
           fontWeight: active ? 600 : 500,
-          color: "var(--ink)",
+          color: active ? "var(--accent)" : "var(--ink)",
+          textShadow: active ? "0 0 8px rgba(0, 240, 255, 0.2)" : "none",
         }}
       >
         {label}
       </span>
     </span>
     <span
-      className="font-body"
+      className="font-mono"
       style={{
-        fontSize: 11.5,
-        color: "var(--muted)",
-        fontVariantNumeric: "tabular-nums",
+        fontSize: 11,
+        color: active ? "var(--accent)" : "var(--muted)",
       }}
     >
       {count}
@@ -1197,7 +1559,7 @@ const RightRail = ({ posts }) => {
             <div
               className="font-display"
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 600,
                 color: "var(--ink)",
                 letterSpacing: "0.12em",
@@ -1212,13 +1574,14 @@ const RightRail = ({ posts }) => {
             {trending.map((p, i) => (
               <li key={p.id} className="flex gap-3">
                 <span
-                  className="font-display"
+                  className="font-mono"
                   style={{
-                    fontSize: 22,
+                    fontSize: 20,
                     fontWeight: 700,
                     color: "var(--accent)",
                     lineHeight: 1,
-                    minWidth: 20,
+                    minWidth: 24,
+                    textShadow: "0 0 8px rgba(0, 240, 255, 0.4)",
                   }}
                 >
                   {String(i + 1).padStart(2, "0")}
@@ -1237,11 +1600,11 @@ const RightRail = ({ posts }) => {
                     {p.title.length > 64 ? p.title.slice(0, 64) + "…" : p.title}
                   </div>
                   <div
-                    className="font-body"
-                    style={{ fontSize: 11, color: "var(--muted)" }}
+                    className="font-mono"
+                    style={{ fontSize: 10, color: "var(--muted)" }}
                   >
-                    {formatNum(totalReactions(p) + p.comments)} interactions ·{" "}
-                    {getCategory(p.category)?.name}
+                    {formatNum(totalReactions(p) + p.comments)} INT ·{" "}
+                    {getCategory(p.category)?.name.toUpperCase()}
                   </div>
                 </div>
               </li>
@@ -1250,26 +1613,28 @@ const RightRail = ({ posts }) => {
         </div>
 
         <div
-          className="eh-card"
+          className="eh-card eh-holographic"
           style={{
-            padding: 18,
-            background: "linear-gradient(180deg, #FAEFD8 0%, #FFFFFF 100%)",
+            padding: 20,
+            border: "1px solid rgba(0, 240, 255, 0.25)",
+            boxShadow: "0 0 20px rgba(0, 240, 255, 0.05), inset 0 1px 0 rgba(255,255,255,0.02)",
           }}
         >
-          <Hexagon size={18} style={{ color: "var(--accent)" }} />
+          <Hexagon size={18} style={{ color: "var(--accent)", filter: "drop-shadow(0 0 6px var(--accent))" }} />
           <div
             className="font-display mt-3"
             style={{
               fontSize: 14,
-              fontWeight: 600,
+              fontWeight: 700,
               color: "var(--ink)",
               letterSpacing: "-0.01em",
+              textShadow: "0 0 10px rgba(0, 240, 255, 0.2)",
             }}
           >
             Your voice matters here.
           </div>
           <div
-            className="font-body mt-1.5"
+            className="font-body mt-2"
             style={{ fontSize: 12.5, color: "var(--ink-2)", lineHeight: 1.55 }}
           >
             Every post, every comment, every reaction shapes the campus
@@ -1278,15 +1643,15 @@ const RightRail = ({ posts }) => {
         </div>
 
         <div
-          className="font-body px-1"
-          style={{ fontSize: 11, color: "var(--muted)", lineHeight: 1.6 }}
+          className="font-mono px-1"
+          style={{ fontSize: 10, color: "var(--muted)", lineHeight: 1.7 }}
         >
-          EchoHive · Multi-University Edition
+          ECHOHIVE // MULTI-CAMPUS COMMAND
           <br />
-          About · Guidelines · Privacy · Contact
+          ABOUT · GUIDELINES · PRIVACY · CONTACT
           <br />
-          <span style={{ color: "#B8B2A2" }}>
-            © 2026 — A Final Year Project
+          <span style={{ color: "rgba(0, 240, 255, 0.2)" }}>
+            © 2026 // SYSTEM TERMINAL
           </span>
         </div>
       </div>
@@ -1310,21 +1675,24 @@ const ActionBtn = ({
     className="flex items-center gap-1.5"
     style={{
       padding: "7px 11px",
-      borderRadius: 2,
+      borderRadius: 6,
       fontSize: 12.5,
       color: active ? activeColor : "var(--ink-2)",
       fontWeight: active ? 600 : 400,
-      fontFamily: active ? "'Poppins', sans-serif" : "'Roboto', sans-serif",
+      fontFamily: "'Inter', sans-serif",
       background: "transparent",
       transition: "background .15s ease, color .15s ease",
     }}
-    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--line-2)")}
+    onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(0, 240, 255, 0.05)")}
     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
   >
     <Icon
       size={14}
       strokeWidth={active ? 2.4 : 2}
       fill={active && fillWhenActive ? activeColor : "none"}
+      style={{
+        filter: active ? `drop-shadow(0 0 4px ${activeColor})` : "none",
+      }}
     />
     <span className="hidden sm:inline">{label}</span>
   </button>
@@ -1371,10 +1739,10 @@ const PostCard = ({
               </span>
             </div>
             <div
-              className="font-body"
-              style={{ fontSize: 11.5, color: "var(--muted)" }}
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--muted)" }}
             >
-              <span style={{ color: "var(--accent-deep)" }}>
+              <span style={{ color: "var(--accent)", textShadow: "0 0 8px rgba(0, 240, 255, 0.2)" }}>
                 {post.author.university}
               </span>
               {post.author.year && <> · {post.author.year}</>} ·{" "}
@@ -1413,6 +1781,8 @@ const PostCard = ({
             : post.content}
         </p>
       </button>
+
+      <MediaGallery items={post.media} />
 
       <div
         className="flex items-center justify-between mb-2.5"
@@ -1467,17 +1837,22 @@ const PostCard = ({
         {(isAdmin || isOwner) && (
           <button
             onClick={() => onDelete(post.id)}
-            className="flex items-center gap-1.5"
+            className="flex items-center justify-center"
             style={{
               fontSize: 12,
               color: "var(--muted)",
-              padding: "6px 10px",
-              borderRadius: 2,
+              padding: 6,
+              borderRadius: 6,
+              transition: "all .15s ease",
             }}
-            onMouseEnter={(e) =>
-              (e.currentTarget.style.color = "var(--danger)")
-            }
-            onMouseLeave={(e) => (e.currentTarget.style.color = "var(--muted)")}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.color = "var(--danger)";
+              e.currentTarget.style.background = "rgba(255, 51, 102, 0.1)";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.color = "var(--muted)";
+              e.currentTarget.style.background = "transparent";
+            }}
           >
             <Trash2 size={13} />
           </button>
@@ -1495,15 +1870,17 @@ const SortTab = ({ label, active, onClick }) => (
     onClick={onClick}
     className="font-display"
     style={{
-      fontSize: 12,
-      fontWeight: 500,
-      padding: "6px 12px",
-      borderRadius: 2,
-      color: active ? "var(--ink)" : "var(--muted)",
-      background: active ? "var(--surface)" : "transparent",
-      border: `1px solid ${active ? "var(--line)" : "transparent"}`,
-      letterSpacing: "0.03em",
+      fontSize: 11,
+      fontWeight: active ? 600 : 500,
+      padding: "6px 14px",
+      borderRadius: 6,
+      color: active ? "var(--accent)" : "var(--ink-2)",
+      background: active ? "rgba(0, 240, 255, 0.08)" : "transparent",
+      border: `1px solid ${active ? "rgba(0, 240, 255, 0.25)" : "var(--glass-border)"}`,
+      letterSpacing: "0.06em",
       textTransform: "uppercase",
+      transition: "all .2s ease",
+      boxShadow: active ? "0 0 10px rgba(0, 240, 255, 0.05)" : "none",
     }}
   >
     {label}
@@ -1513,20 +1890,22 @@ const SortTab = ({ label, active, onClick }) => (
 const MobileChip = ({ label, active, onClick, color }) => (
   <button
     onClick={onClick}
-    className="font-display shrink-0"
+    className="font-mono shrink-0"
     style={{
-      fontSize: 12,
-      fontWeight: 600,
+      fontSize: 11,
+      fontWeight: active ? 700 : 500,
       padding: "7px 14px",
-      borderRadius: 2,
-      color: active ? "white" : color || "var(--ink-2)",
-      background: active ? "var(--ink)" : "var(--surface)",
-      border: `1px solid ${active ? "var(--ink)" : "var(--line)"}`,
-      letterSpacing: "0.02em",
+      borderRadius: 8,
+      color: active ? "#06080F" : color || "var(--ink-2)",
+      background: active ? color || "var(--accent)" : "rgba(12, 18, 35, 0.5)",
+      border: `1px solid ${active ? color || "var(--accent)" : "var(--glass-border)"}`,
+      letterSpacing: "0.04em",
       whiteSpace: "nowrap",
+      transition: "all .15s ease",
+      boxShadow: active ? `0 0 15px ${color || "var(--accent)"}30` : "none",
     }}
   >
-    {label}
+    {label.toUpperCase()}
   </button>
 );
 
@@ -1714,11 +2093,13 @@ const CommentNode = ({
   const replies = allComments.filter((c) => c.parentId === comment.id);
   const [replyOpen, setReplyOpen] = useState(false);
   const [text, setText] = useState("");
+  const [replyMedia, setReplyMedia] = useState(null);
 
   const submit = () => {
     if (!text.trim()) return;
-    onReply(comment.postId, text.trim(), comment.id);
+    onReply(comment.postId, text.trim(), comment.id, replyMedia);
     setText("");
+    setReplyMedia(null);
     setReplyOpen(false);
   };
 
@@ -1727,7 +2108,7 @@ const CommentNode = ({
       style={{
         marginLeft: depth > 0 ? 28 : 0,
         paddingLeft: depth > 0 ? 12 : 0,
-        borderLeft: depth > 0 ? "2px solid var(--line-2)" : "none",
+        borderLeft: depth > 0 ? "2px solid rgba(0, 240, 255, 0.1)" : "none",
       }}
     >
       <div className="flex gap-3">
@@ -1758,27 +2139,32 @@ const CommentNode = ({
             >
               {comment.content}
             </p>
+            <MediaGallery
+              items={comment.media ? [comment.media] : []}
+              maxHeight={220}
+            />
           </div>
 
           <div className="flex items-center gap-3 mt-1.5 ml-1">
             <button
               onClick={() => setReplyOpen((v) => !v)}
-              className="font-display flex items-center gap-1"
+              className="font-mono flex items-center gap-1"
               style={{
-                fontSize: 11.5,
-                fontWeight: 500,
+                fontSize: 11,
+                fontWeight: 600,
                 color: "var(--muted)",
-                letterSpacing: "0.03em",
+                letterSpacing: "0.06em",
+                textTransform: "uppercase",
               }}
             >
               <CornerDownRight size={11} /> Reply
             </button>
             {replies.length > 0 && (
               <span
-                className="font-body"
-                style={{ fontSize: 11.5, color: "var(--muted)" }}
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--muted)" }}
               >
-                {replies.length} {replies.length === 1 ? "reply" : "replies"}
+                {replies.length} {replies.length === 1 ? "REPLY" : "REPLIES"}
               </span>
             )}
           </div>
@@ -1786,24 +2172,33 @@ const CommentNode = ({
           {replyOpen && (
             <div className="flex gap-2 mt-2 eh-fade-in">
               <Avatar name={currentUser.display} size={26} />
-              <div className="flex-1 flex gap-2">
-                <input
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && submit()}
-                  placeholder={`Reply to ${comment.author.display.split(" ")[0]}…`}
-                  className="eh-input flex-1 font-body"
-                  style={{ padding: "7px 11px", fontSize: 12.5 }}
-                  autoFocus
-                />
-                <button
-                  onClick={submit}
-                  className="eh-btn eh-btn-primary"
-                  style={{ padding: "7px 12px", fontSize: 12 }}
-                  disabled={!text.trim()}
-                >
-                  <Send size={12} />
-                </button>
+              <div className="flex-1">
+                <div className="flex gap-2">
+                  <input
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && submit()}
+                    placeholder={`Reply to ${comment.author.display.split(" ")[0]}…`}
+                    className="eh-input flex-1 font-body text-xs"
+                    style={{ padding: "7px 11px" }}
+                    autoFocus
+                  />
+                  <button
+                    onClick={submit}
+                    className="eh-btn eh-btn-primary"
+                    style={{ padding: "7px 14px", fontSize: 11 }}
+                    disabled={!text.trim()}
+                  >
+                    <Send size={11} />
+                  </button>
+                </div>
+                <div className="mt-1.5">
+                  <SingleMediaAttach
+                    file={replyMedia}
+                    onPick={setReplyMedia}
+                    onClear={() => setReplyMedia(null)}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -1841,14 +2236,16 @@ const PostDetail = ({
 }) => {
   const [text, setText] = useState("");
   const [commenting, setCommenting] = useState(false);
+  const [commentMedia, setCommentMedia] = useState(null);
   const topLevel = comments.filter((c) => c.parentId === null);
 
   const submit = async () => {
     if (!text.trim() || commenting) return;
     setCommenting(true);
     try {
-      await onAddComment(post.id, text.trim(), null);
+      await onAddComment(post.id, text.trim(), null, commentMedia);
       setText("");
+      setCommentMedia(null);
     } finally {
       setCommenting(false);
     }
@@ -1858,7 +2255,9 @@ const PostDetail = ({
     <div
       className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
       style={{
-        background: "rgba(21,20,18,0.4)",
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
         padding: "24px 16px",
         overflowY: "auto",
       }}
@@ -1866,7 +2265,7 @@ const PostDetail = ({
     >
       <div
         className="eh-card w-full"
-        style={{ maxWidth: 780, boxShadow: "0 20px 60px rgba(21,20,18,0.18)" }}
+        style={{ maxWidth: 780, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -1925,11 +2324,11 @@ const PostDetail = ({
                 {post.author.display}
               </div>
               <div
-                className="font-body"
-                style={{ fontSize: 12, color: "var(--muted)" }}
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--muted)" }}
               >
                 @{post.author.username} ·{" "}
-                <span style={{ color: "var(--accent-deep)" }}>
+                <span style={{ color: "var(--accent)" }}>
                   {post.author.university}
                 </span>
                 {post.author.year && <> · {post.author.year}</>} ·{" "}
@@ -1949,6 +2348,10 @@ const PostDetail = ({
           >
             {post.content}
           </p>
+
+          <div className="mt-5">
+            <MediaGallery items={post.media} maxHeight={460} />
+          </div>
 
           <div
             className="flex items-center justify-between flex-wrap gap-3 mt-6 pt-4"
@@ -1996,11 +2399,11 @@ const PostDetail = ({
           </div>
         </div>
 
-        <div style={{ padding: "20px 32px 28px", background: "var(--bg)" }}>
+        <div style={{ padding: "20px 32px 28px", background: "rgba(6, 8, 15, 0.45)" }}>
           <div
-            className="font-display"
+            className="font-mono"
             style={{
-              fontSize: 12,
+              fontSize: 11,
               fontWeight: 600,
               color: "var(--muted)",
               letterSpacing: "0.14em",
@@ -2008,7 +2411,7 @@ const PostDetail = ({
               marginBottom: 8,
             }}
           >
-            {comments.length} {comments.length === 1 ? "Reply" : "Replies"}
+            {comments.length} {comments.length === 1 ? "REPLY" : "REPLIES"}
           </div>
           <div className="eh-rule mb-5"></div>
 
@@ -2027,7 +2430,12 @@ const PostDetail = ({
                   resize: "vertical",
                 }}
               />
-              <div className="flex justify-end mt-2">
+              <div className="flex items-center justify-between mt-2">
+                <SingleMediaAttach
+                  file={commentMedia}
+                  onPick={setCommentMedia}
+                  onClear={() => setCommentMedia(null)}
+                />
                 <button
                   onClick={submit}
                   className="eh-btn eh-btn-primary text-sm"
@@ -2042,7 +2450,7 @@ const PostDetail = ({
                 >
                   {commenting ? (
                     <>
-                      <Spinner size={13} color="#FAF8F3" /> Posting…
+                      <Spinner size={13} color="#06080F" /> Posting…
                     </>
                   ) : (
                     "Reply"
@@ -2146,7 +2554,20 @@ const CreatePost = ({ onClose, onSubmit }) => {
   const [content, setContent] = useState("");
   const [category, setCategory] = useState("academics");
   const [submitting, setSubmitting] = useState(false);
+  const [mediaItems, setMediaItems] = useState([]);
   const canSubmit = title.trim().length >= 8 && content.trim().length >= 20;
+
+  useEffect(() => {
+    return () => mediaItems.forEach((m) => URL.revokeObjectURL(m.url));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const removeMedia = (index) => {
+    setMediaItems((prev) => {
+      URL.revokeObjectURL(prev[index].url);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
 
   const handleSubmit = async () => {
     if (!canSubmit || submitting) return;
@@ -2156,6 +2577,7 @@ const CreatePost = ({ onClose, onSubmit }) => {
         title: title.trim(),
         content: content.trim(),
         category,
+        mediaFiles: mediaItems.map((m) => m.file),
       });
     } finally {
       setSubmitting(false);
@@ -2165,12 +2587,17 @@ const CreatePost = ({ onClose, onSubmit }) => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
-      style={{ background: "rgba(21,20,18,0.4)", padding: "32px 16px" }}
+      style={{
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "32px 16px",
+      }}
       onClick={onClose}
     >
       <div
         className="eh-card w-full"
-        style={{ maxWidth: 640, boxShadow: "0 20px 60px rgba(21,20,18,0.18)" }}
+        style={{ maxWidth: 640, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -2214,19 +2641,21 @@ const CreatePost = ({ onClose, onSubmit }) => {
                 <button
                   key={c.id}
                   onClick={() => setCategory(c.id)}
-                  className="font-display flex items-center justify-center gap-1.5"
+                  className="font-mono flex items-center justify-center gap-1.5"
                   style={{
                     padding: "10px 8px",
-                    borderRadius: 2,
-                    fontSize: 12.5,
+                    borderRadius: 8,
+                    fontSize: 11,
                     fontWeight: 600,
-                    background: active ? c.bg : "var(--surface)",
+                    background: active ? c.bg : "rgba(12, 18, 35, 0.5)",
                     color: active ? c.color : "var(--ink-2)",
-                    border: `1px solid ${active ? c.color : "var(--line)"}`,
+                    border: `1px solid ${active ? c.color : "var(--glass-border)"}`,
+                    transition: "all .15s ease",
+                    boxShadow: active ? `0 0 10px ${c.color}20` : "none",
                   }}
                 >
-                  <Icon size={13} strokeWidth={2.2} />
-                  {c.name}
+                  <Icon size={12} strokeWidth={2.4} />
+                  {c.name.toUpperCase()}
                 </button>
               );
             })}
@@ -2260,7 +2689,15 @@ const CreatePost = ({ onClose, onSubmit }) => {
               fontSize: 14,
               lineHeight: 1.6,
               resize: "vertical",
+              marginBottom: 18,
             }}
+          />
+
+          <Label>Photos & video (optional)</Label>
+          <MediaPicker
+            items={mediaItems}
+            onAdd={(accepted) => setMediaItems((prev) => [...prev, ...accepted])}
+            onRemove={removeMedia}
           />
 
           <div className="flex justify-between items-center mt-6">
@@ -2294,7 +2731,7 @@ const CreatePost = ({ onClose, onSubmit }) => {
               >
                 {submitting ? (
                   <>
-                    <Spinner size={14} color="#FAF8F3" /> Publishing…
+                    <Spinner size={14} color="#06080F" /> Publishing…
                   </>
                 ) : (
                   "Publish"
@@ -2316,12 +2753,17 @@ const RepostModal = ({ post, onClose, onConfirm }) => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
-      style={{ background: "rgba(21,20,18,0.4)", padding: "32px 16px" }}
+      style={{
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "32px 16px",
+      }}
       onClick={onClose}
     >
       <div
         className="eh-card w-full"
-        style={{ maxWidth: 540, boxShadow: "0 20px 60px rgba(21,20,18,0.18)" }}
+        style={{ maxWidth: 540, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -2353,7 +2795,7 @@ const RepostModal = ({ post, onClose, onConfirm }) => {
           />
           <div
             className="eh-card"
-            style={{ padding: 12, background: "var(--bg)" }}
+            style={{ padding: 12, background: "rgba(6, 8, 15, 0.45)" }}
           >
             <div className="flex items-center gap-2 mb-1.5">
               <Avatar name={post.author.display} size={24} />
@@ -2417,12 +2859,17 @@ const ShareModal = ({ post, onClose, onCopy }) => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
-      style={{ background: "rgba(21,20,18,0.4)", padding: "32px 16px" }}
+      style={{
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "32px 16px",
+      }}
       onClick={onClose}
     >
       <div
         className="eh-card w-full"
-        style={{ maxWidth: 460 }}
+        style={{ maxWidth: 460, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
         onClick={(e) => e.stopPropagation()}
       >
         <div
@@ -2597,7 +3044,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
             className="font-display mt-10"
             style={{
               fontSize: 44,
-              fontWeight: 700,
+              fontWeight: 800,
               color: "var(--ink)",
               letterSpacing: "-0.035em",
               lineHeight: 1.05,
@@ -2605,7 +3052,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           >
             Your voice.
             <br />
-            <span style={{ color: "var(--accent)" }}>Your campus.</span>
+            <span style={{ color: "var(--accent)", textShadow: "0 0 20px rgba(0, 240, 255, 0.4)" }}>Your campus.</span>
           </h1>
           <div className="eh-rule mt-5 mb-5" style={{ width: 48 }}></div>
           <p
@@ -2621,7 +3068,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
             that shape student life — across every university that joins us.
             Structured. Accountable. Yours.
           </p>
-          <div className="mt-10 space-y-4">
+          <div className="mt-10 space-y-5">
             {[
               [
                 "Open to every campus",
@@ -2641,11 +3088,27 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 className="flex gap-3 eh-fade-up"
                 style={{ animationDelay: `${200 + i * 80}ms` }}
               >
-                <Check
-                  size={16}
-                  style={{ color: "var(--accent)", marginTop: 3 }}
-                  strokeWidth={2.5}
-                />
+                <div
+                  style={{
+                    width: 28,
+                    height: 28,
+                    borderRadius: 8,
+                    background: "rgba(0, 240, 255, 0.1)",
+                    border: "1px solid rgba(0, 240, 255, 0.2)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    shrink: 0,
+                    marginTop: 2,
+                    boxShadow: "0 0 10px rgba(0, 240, 255, 0.15)",
+                  }}
+                >
+                  <Check
+                    size={14}
+                    style={{ color: "var(--accent)" }}
+                    strokeWidth={3}
+                  />
+                </div>
                 <div>
                   <div
                     className="font-display"
@@ -2675,7 +3138,12 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
 
         <div
           className="eh-card eh-fade-up"
-          style={{ padding: "36px 36px 32px", animationDelay: "120ms" }}
+          style={{
+            padding: "40px 40px 36px",
+            animationDelay: "120ms",
+            border: "1px solid rgba(0, 240, 255, 0.15)",
+            boxShadow: "0 20px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(0, 240, 255, 0.05)",
+          }}
         >
           <div className="md:hidden mb-6">
             <Logo />
@@ -2728,12 +3196,12 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                   <button
                     type="button"
                     onClick={() => switchMode("forgot")}
-                    className="font-display"
+                    className="font-mono"
                     style={{
-                      fontSize: 11,
-                      fontWeight: 500,
-                      color: "var(--accent-deep)",
-                      letterSpacing: "0.04em",
+                      fontSize: 10,
+                      fontWeight: 600,
+                      color: "var(--accent)",
+                      letterSpacing: "0.08em",
                       textTransform: "uppercase",
                       marginBottom: 8,
                     }}
@@ -2793,7 +3261,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               >
                 {loading ? (
                   <>
-                    <Spinner size={16} color="#FAF8F3" /> Signing in…
+                    <Spinner size={16} color="#06080F" /> Signing in…
                   </>
                 ) : (
                   "Sign in"
@@ -2807,10 +3275,10 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 <button
                   type="button"
                   onClick={() => switchMode("register")}
-                  className="font-display"
-                  style={{ color: "var(--accent-deep)", fontWeight: 600 }}
+                  className="font-mono"
+                  style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12, letterSpacing: "0.02em" }}
                 >
-                  Create an account
+                  CREATE AN ACCOUNT
                 </button>
               </div>
               <div
@@ -2870,12 +3338,12 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                     style={{
                       padding: "10px 14px 10px 38px",
                       fontSize: 14,
-                      appearance: "none",
                       cursor: "pointer",
+                      background: "rgba(6, 8, 15, 0.8)",
                     }}
                   >
                     {UNIVERSITIES.map((u) => (
-                      <option key={u} value={u}>
+                      <option key={u} value={u} style={{ background: "var(--bg-elevated)", color: "var(--ink)" }}>
                         {u}
                       </option>
                     ))}
@@ -2945,7 +3413,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               >
                 {loading ? (
                   <>
-                    <Spinner size={16} color="#FAF8F3" /> Creating account…
+                    <Spinner size={16} color="#06080F" /> Creating account…
                   </>
                 ) : (
                   "Create account"
@@ -2959,10 +3427,10 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 <button
                   type="button"
                   onClick={() => switchMode("login")}
-                  className="font-display"
-                  style={{ color: "var(--accent-deep)", fontWeight: 600 }}
+                  className="font-mono"
+                  style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12, letterSpacing: "0.02em" }}
                 >
-                  Sign in instead
+                  SIGN IN INSTEAD
                 </button>
               </div>
             </form>
@@ -3006,7 +3474,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               >
                 {loading ? (
                   <>
-                    <Spinner size={16} color="#FAF8F3" /> Sending…
+                    <Spinner size={16} color="#06080F" /> Sending…
                   </>
                 ) : (
                   "Send reset link"
@@ -3020,10 +3488,10 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 <button
                   type="button"
                   onClick={() => switchMode("login")}
-                  className="font-display"
-                  style={{ color: "var(--accent-deep)", fontWeight: 600 }}
+                  className="font-mono"
+                  style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12, letterSpacing: "0.02em" }}
                 >
-                  Back to sign in
+                  BACK TO SIGN IN
                 </button>
               </div>
             </form>
@@ -3097,7 +3565,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               >
                 {loading ? (
                   <>
-                    <Spinner size={16} color="#FAF8F3" /> Updating…
+                    <Spinner size={16} color="#06080F" /> Updating…
                   </>
                 ) : (
                   "Set new password"
@@ -3115,16 +3583,40 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
 // ADMIN PANEL
 // =====================================================================
 const StatCard = ({ icon: Icon, label, value, sub, tone }) => (
-  <div className="eh-card" style={{ padding: 18 }}>
+  <div
+    className="eh-card"
+    style={{
+      padding: "20px 22px",
+      border: `1px solid ${tone === "danger" ? "rgba(255, 51, 102, 0.25)" : "rgba(0, 240, 255, 0.15)"}`,
+      boxShadow: tone === "danger"
+        ? "0 8px 32px rgba(255, 51, 102, 0.05)"
+        : "0 8px 32px rgba(0, 240, 255, 0.03)",
+    }}
+  >
     <div className="flex items-center justify-between mb-4">
-      <Icon
-        size={16}
-        style={{ color: tone === "danger" ? "var(--danger)" : "var(--accent)" }}
-      />
-      <span
-        className="font-display"
+      <div
         style={{
-          fontSize: 10.5,
+          width: 32,
+          height: 32,
+          borderRadius: 8,
+          background: tone === "danger" ? "rgba(255, 51, 102, 0.1)" : "rgba(0, 240, 255, 0.1)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Icon
+          size={16}
+          style={{
+            color: tone === "danger" ? "var(--danger)" : "var(--accent)",
+            filter: `drop-shadow(0 0 4px ${tone === "danger" ? "var(--danger)" : "var(--accent)"})`,
+          }}
+        />
+      </div>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 10,
           fontWeight: 600,
           color: "var(--muted)",
           letterSpacing: "0.14em",
@@ -3137,21 +3629,22 @@ const StatCard = ({ icon: Icon, label, value, sub, tone }) => (
     <div
       className="font-display"
       style={{
-        fontSize: 30,
-        fontWeight: 700,
-        color: "var(--ink)",
+        fontSize: 32,
+        fontWeight: 800,
+        color: tone === "danger" ? "var(--danger)" : "var(--ink)",
         letterSpacing: "-0.02em",
         fontVariantNumeric: "tabular-nums",
         lineHeight: 1,
+        textShadow: tone === "danger" ? "0 0 10px rgba(255, 51, 102, 0.2)" : "0 0 10px rgba(0, 240, 255, 0.1)",
       }}
     >
       {formatNum(value)}
     </div>
     <div
-      className="font-body mt-2"
-      style={{ fontSize: 12, color: "var(--muted)" }}
+      className="font-mono"
+      style={{ fontSize: 11, color: "var(--muted)", marginTop: 8 }}
     >
-      {sub}
+      {sub.toUpperCase()}
     </div>
   </div>
 );
@@ -3166,12 +3659,12 @@ const AdminOverview = ({ posts }) => {
     <div className="grid lg:grid-cols-2 gap-5">
       <div className="eh-card" style={{ padding: 22 }}>
         <div
-          className="font-display"
+          className="font-mono"
           style={{
-            fontSize: 13,
+            fontSize: 11,
             fontWeight: 600,
             color: "var(--ink)",
-            letterSpacing: "0.04em",
+            letterSpacing: "0.08em",
             textTransform: "uppercase",
           }}
         >
@@ -3186,26 +3679,28 @@ const AdminOverview = ({ posts }) => {
                 <div className="flex justify-between mb-1.5">
                   <span
                     className="font-display"
-                    style={{ fontSize: 13, fontWeight: 500 }}
+                    style={{ fontSize: 13, fontWeight: 600 }}
                   >
                     {c.name}
                   </span>
                   <span
-                    className="font-body"
+                    className="font-mono"
                     style={{
-                      fontSize: 12,
+                      fontSize: 11,
                       color: "var(--muted)",
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {c.count} posts · {pct}%
+                    {c.count} POSTS · {pct}%
                   </span>
                 </div>
                 <div
                   style={{
-                    height: 6,
-                    background: "var(--line-2)",
-                    borderRadius: 1,
+                    height: 8,
+                    background: "rgba(0, 240, 255, 0.05)",
+                    borderRadius: 4,
+                    overflow: "hidden",
+                    border: "1px solid rgba(0, 240, 255, 0.08)",
                   }}
                 >
                   <div
@@ -3214,6 +3709,8 @@ const AdminOverview = ({ posts }) => {
                       height: "100%",
                       background: c.color,
                       transition: "width .4s ease",
+                      borderRadius: 4,
+                      boxShadow: `0 0 10px ${c.color}`,
                     }}
                   ></div>
                 </div>
@@ -3224,12 +3721,12 @@ const AdminOverview = ({ posts }) => {
       </div>
       <div className="eh-card" style={{ padding: 22 }}>
         <div
-          className="font-display"
+          className="font-mono"
           style={{
-            fontSize: 13,
+            fontSize: 11,
             fontWeight: 600,
             color: "var(--ink)",
-            letterSpacing: "0.04em",
+            letterSpacing: "0.08em",
             textTransform: "uppercase",
           }}
         >
@@ -3246,20 +3743,20 @@ const AdminOverview = ({ posts }) => {
                 <div className="flex-1 min-w-0">
                   <div
                     className="font-display"
-                    style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}
+                    style={{ fontSize: 13, fontWeight: 600, lineHeight: 1.4 }}
                   >
                     {p.title.length > 72 ? p.title.slice(0, 72) + "…" : p.title}
                   </div>
                   <div
-                    className="font-body"
+                    className="font-mono"
                     style={{
-                      fontSize: 11.5,
+                      fontSize: 10.5,
                       color: "var(--muted)",
                       marginTop: 2,
                     }}
                   >
-                    {p.author.display} · {getCategory(p.category)?.name} ·{" "}
-                    {timeAgo(p.createdAt)}
+                    {p.author.display.toUpperCase()} · {getCategory(p.category)?.name.toUpperCase()} ·{" "}
+                    {timeAgo(p.createdAt).toUpperCase()}
                   </div>
                 </div>
               </div>
@@ -3275,20 +3772,20 @@ const AdminPosts = ({ posts, onDelete }) => (
     <div style={{ overflowX: "auto" }}>
       <table className="w-full">
         <thead>
-          <tr style={{ background: "var(--bg)" }}>
+          <tr style={{ background: "rgba(6, 8, 15, 0.45)" }}>
             {["Post", "Author", "Category", "Engagement", "Posted", ""].map(
               (h) => (
                 <th
                   key={h}
-                  className="font-display text-left"
+                  className="font-mono text-left"
                   style={{
-                    fontSize: 10.5,
+                    fontSize: 10,
                     fontWeight: 600,
                     color: "var(--muted)",
                     letterSpacing: "0.14em",
                     textTransform: "uppercase",
-                    padding: "12px 16px",
-                    borderBottom: "1px solid var(--line)",
+                    padding: "14px 18px",
+                    borderBottom: "1px solid var(--glass-border)",
                   }}
                 >
                   {h}
@@ -3299,13 +3796,13 @@ const AdminPosts = ({ posts, onDelete }) => (
         </thead>
         <tbody>
           {posts.map((p) => (
-            <tr key={p.id} style={{ borderBottom: "1px solid var(--line-2)" }}>
-              <td style={{ padding: "14px 16px", maxWidth: 320 }}>
+            <tr key={p.id} style={{ borderBottom: "1px solid var(--glass-border)", transition: "background .15s ease" }} className="hover:bg-[rgba(0,240,255,0.02)]">
+              <td style={{ padding: "14px 18px", maxWidth: 320 }}>
                 <div
                   className="font-display"
                   style={{
                     fontSize: 13.5,
-                    fontWeight: 500,
+                    fontWeight: 600,
                     lineHeight: 1.4,
                     overflow: "hidden",
                     display: "-webkit-box",
@@ -3317,17 +3814,17 @@ const AdminPosts = ({ posts, onDelete }) => (
                 </div>
               </td>
               <td
-                style={{ padding: "14px 16px" }}
+                style={{ padding: "14px 18px" }}
                 className="font-body text-sm"
               >
                 {p.author.display}
               </td>
-              <td style={{ padding: "14px 16px" }}>
+              <td style={{ padding: "14px 18px" }}>
                 <CategoryChip categoryId={p.category} compact />
               </td>
               <td
-                style={{ padding: "14px 16px" }}
-                className="font-body text-sm"
+                style={{ padding: "14px 18px" }}
+                className="font-mono text-xs"
               >
                 <span
                   style={{
@@ -3335,35 +3832,46 @@ const AdminPosts = ({ posts, onDelete }) => (
                     color: "var(--ink-2)",
                   }}
                 >
-                  {totalReactions(p)} reactions · {p.comments} comments ·{" "}
-                  {formatNum(p.views)} views
+                  {totalReactions(p)} REACTIONS · {p.comments} COMMENTS ·{" "}
+                  {formatNum(p.views)} VIEWS
                 </span>
               </td>
               <td
-                style={{ padding: "14px 16px" }}
+                style={{ padding: "14px 18px" }}
                 className="font-body text-sm"
               >
                 <span style={{ color: "var(--muted)" }}>
                   {timeAgo(p.createdAt)}
                 </span>
               </td>
-              <td style={{ padding: "14px 16px", textAlign: "right" }}>
+              <td style={{ padding: "14px 18px", textAlign: "right" }}>
                 <button
                   onClick={() => onDelete(p.id)}
-                  className="font-display"
+                  className="font-mono flex items-center justify-center ml-auto"
                   style={{
-                    fontSize: 12,
-                    fontWeight: 500,
+                    fontSize: 11,
+                    fontWeight: 600,
                     color: "var(--danger)",
                     padding: "6px 10px",
-                    borderRadius: 2,
+                    borderRadius: 6,
+                    border: "1px solid rgba(255, 51, 102, 0.2)",
+                    background: "rgba(255, 51, 102, 0.05)",
+                    transition: "all .15s ease",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(255, 51, 102, 0.15)";
+                    e.currentTarget.style.boxShadow = "0 0 10px rgba(255, 51, 102, 0.15)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "rgba(255, 51, 102, 0.05)";
+                    e.currentTarget.style.boxShadow = "none";
                   }}
                 >
                   <Trash2
-                    size={13}
-                    style={{ display: "inline", marginRight: 4 }}
+                    size={11}
+                    style={{ marginRight: 4 }}
                   />{" "}
-                  Delete
+                  DELETE
                 </button>
               </td>
             </tr>
@@ -3379,19 +3887,19 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
     <div style={{ overflowX: "auto" }}>
       <table className="w-full">
         <thead>
-          <tr style={{ background: "var(--bg)" }}>
+          <tr style={{ background: "rgba(6, 8, 15, 0.45)" }}>
             {["User", "University", "Role", "Status", "Joined", ""].map((h) => (
               <th
                 key={h}
-                className="font-display text-left"
+                className="font-mono text-left"
                 style={{
-                  fontSize: 10.5,
+                  fontSize: 10,
                   fontWeight: 600,
                   color: "var(--muted)",
                   letterSpacing: "0.14em",
                   textTransform: "uppercase",
-                  padding: "12px 16px",
-                  borderBottom: "1px solid var(--line)",
+                  padding: "14px 18px",
+                  borderBottom: "1px solid var(--glass-border)",
                 }}
               >
                 {h}
@@ -3401,8 +3909,8 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
         </thead>
         <tbody>
           {users.map((u) => (
-            <tr key={u.id} style={{ borderBottom: "1px solid var(--line-2)" }}>
-              <td style={{ padding: "12px 16px" }}>
+            <tr key={u.id} style={{ borderBottom: "1px solid var(--glass-border)", transition: "background .15s ease" }} className="hover:bg-[rgba(0,240,255,0.02)]">
+              <td style={{ padding: "14px 18px" }}>
                 <div className="flex items-center gap-2.5">
                   <Avatar name={u.display} size={30} />
                   <div>
@@ -3413,8 +3921,8 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
                       {u.display}
                     </div>
                     <div
-                      className="font-body"
-                      style={{ fontSize: 11.5, color: "var(--muted)" }}
+                      className="font-mono"
+                      style={{ fontSize: 10.5, color: "var(--muted)" }}
                     >
                       @{u.username} · {u.email}
                     </div>
@@ -3422,40 +3930,41 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
                 </div>
               </td>
               <td
-                style={{ padding: "12px 16px" }}
+                style={{ padding: "14px 18px" }}
                 className="font-body text-sm"
               >
                 <span style={{ color: "var(--ink-2)" }}>{u.university}</span>
               </td>
-              <td style={{ padding: "12px 16px" }}>
+              <td style={{ padding: "14px 18px" }}>
                 <span
-                  className="font-display"
+                  className="font-mono"
                   style={{
-                    fontSize: 11,
+                    fontSize: 10,
                     fontWeight: 600,
                     letterSpacing: "0.08em",
                     textTransform: "uppercase",
                     padding: "3px 8px",
-                    borderRadius: 2,
+                    borderRadius: 6,
                     color:
                       u.role === "admin"
-                        ? "var(--accent-deep)"
+                        ? "var(--accent)"
                         : "var(--ink-2)",
                     background:
                       u.role === "admin"
-                        ? "var(--accent-soft)"
-                        : "var(--line-2)",
+                        ? "rgba(0, 240, 255, 0.1)"
+                        : "rgba(12, 18, 35, 0.5)",
+                    border: `1px solid ${u.role === "admin" ? "rgba(0, 240, 255, 0.25)" : "var(--glass-border)"}`,
                   }}
                 >
                   {u.role}
                 </span>
               </td>
-              <td style={{ padding: "12px 16px" }}>
+              <td style={{ padding: "14px 18px" }}>
                 <span
-                  className="font-display flex items-center gap-1.5"
+                  className="font-mono flex items-center gap-1.5"
                   style={{
-                    fontSize: 12,
-                    fontWeight: 500,
+                    fontSize: 11,
+                    fontWeight: 600,
                     color: u.isBanned ? "var(--danger)" : "var(--success)",
                   }}
                 >
@@ -3467,50 +3976,79 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
                       background: u.isBanned
                         ? "var(--danger)"
                         : "var(--success)",
+                      boxShadow: u.isBanned
+                        ? "0 0 6px var(--danger)"
+                        : "0 0 6px var(--success)",
                     }}
                   ></span>
-                  {u.isBanned ? "Banned" : "Active"}
+                  {u.isBanned ? "BANNED" : "ACTIVE"}
                 </span>
               </td>
               <td
-                style={{ padding: "12px 16px", color: "var(--muted)" }}
+                style={{ padding: "14px 18px", color: "var(--muted)" }}
                 className="font-body text-sm"
               >
                 {timeAgo(u.createdAt)}
               </td>
-              <td style={{ padding: "12px 16px", textAlign: "right" }}>
+              <td style={{ padding: "14px 18px", textAlign: "right" }}>
                 {u.role !== "admin" &&
                   (u.isBanned ? (
                     <button
                       onClick={() => onUnban(u.id)}
-                      className="font-display"
+                      className="font-mono flex items-center justify-center ml-auto"
                       style={{
-                        fontSize: 12,
-                        fontWeight: 500,
+                        fontSize: 11,
+                        fontWeight: 600,
                         color: "var(--success)",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: "1px solid rgba(0, 230, 118, 0.2)",
+                        background: "rgba(0, 230, 118, 0.05)",
+                        transition: "all .15s ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "rgba(0, 230, 118, 0.15)";
+                        e.currentTarget.style.boxShadow = "0 0 10px rgba(0, 230, 118, 0.15)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "rgba(0, 230, 118, 0.05)";
+                        e.currentTarget.style.boxShadow = "none";
                       }}
                     >
                       <Check
-                        size={13}
-                        style={{ display: "inline", marginRight: 4 }}
+                        size={12}
+                        style={{ marginRight: 4 }}
                       />{" "}
-                      Restore
+                      RESTORE
                     </button>
                   ) : (
                     <button
                       onClick={() => onBan(u.id)}
-                      className="font-display"
+                      className="font-mono flex items-center justify-center ml-auto"
                       style={{
-                        fontSize: 12,
-                        fontWeight: 500,
+                        fontSize: 11,
+                        fontWeight: 600,
                         color: "var(--danger)",
+                        padding: "6px 10px",
+                        borderRadius: 6,
+                        border: "1px solid rgba(255, 51, 102, 0.2)",
+                        background: "rgba(255, 51, 102, 0.05)",
+                        transition: "all .15s ease",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = "rgba(255, 51, 102, 0.15)";
+                        e.currentTarget.style.boxShadow = "0 0 10px rgba(255, 51, 102, 0.15)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = "rgba(255, 51, 102, 0.05)";
+                        e.currentTarget.style.boxShadow = "none";
                       }}
                     >
                       <Ban
-                        size={13}
-                        style={{ display: "inline", marginRight: 4 }}
+                        size={11}
+                        style={{ marginRight: 4 }}
                       />{" "}
-                      Ban
+                      BAN
                     </button>
                   ))}
               </td>
@@ -3544,37 +4082,46 @@ const AdminPanel = ({
   return (
     <div className="eh-root min-h-screen hex-texture">
       <GlobalStyles />
-      <div style={{ background: "var(--ink)", color: "var(--bg)" }}>
+      <div
+        style={{
+          background: "rgba(6, 8, 15, 0.8)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          borderBottom: "1px solid rgba(0, 240, 255, 0.15)",
+          boxShadow: "0 4px 30px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(0, 240, 255, 0.1)",
+        }}
+      >
         <div
-          style={{ maxWidth: 1200, margin: "0 auto", padding: "14px 24px" }}
+          style={{ maxWidth: 1200, margin: "0 auto", padding: "16px 24px" }}
           className="flex items-center justify-between"
         >
           <button
             onClick={onBack}
-            className="flex items-center gap-2 font-display"
+            className="flex items-center gap-2 font-mono"
             style={{
-              fontSize: 12,
-              fontWeight: 500,
-              letterSpacing: "0.04em",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.06em",
               textTransform: "uppercase",
-              color: "#EADFC7",
+              color: "var(--accent)",
+              textShadow: "0 0 10px rgba(0, 240, 255, 0.2)",
             }}
           >
-            <ArrowLeft size={14} /> Back to feed
+            <ArrowLeft size={14} /> BACK TO FEED
           </button>
           <div className="flex items-center gap-2">
-            <ShieldCheck size={14} style={{ color: "var(--accent)" }} />
+            <ShieldCheck size={14} style={{ color: "var(--accent)", filter: "drop-shadow(0 0 5px var(--accent))" }} />
             <span
-              className="font-display"
+              className="font-mono"
               style={{
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: 600,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
-                color: "#EADFC7",
+                color: "var(--ink)",
               }}
             >
-              Administrator Console
+              ADMINISTRATOR CONSOLE
             </span>
           </div>
         </div>
@@ -3632,8 +4179,8 @@ const AdminPanel = ({
         </div>
 
         <div
-          className="flex gap-1 mb-5"
-          style={{ borderBottom: "1px solid var(--line)" }}
+          className="flex gap-1 mb-6"
+          style={{ borderBottom: "1px solid var(--glass-border)" }}
         >
           {[
             ["overview", "Overview"],
@@ -3643,15 +4190,18 @@ const AdminPanel = ({
             <button
               key={k}
               onClick={() => setTab(k)}
-              className="font-display"
+              className="font-mono"
               style={{
-                fontSize: 13,
+                fontSize: 11,
                 fontWeight: 600,
-                padding: "10px 16px",
-                color: tab === k ? "var(--ink)" : "var(--muted)",
+                padding: "12px 18px",
+                color: tab === k ? "var(--accent)" : "var(--muted)",
                 borderBottom: `2px solid ${tab === k ? "var(--accent)" : "transparent"}`,
                 marginBottom: -1,
-                letterSpacing: "0.02em",
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                textShadow: tab === k ? "0 0 10px rgba(0, 240, 255, 0.3)" : "none",
+                transition: "all .2s ease",
               }}
             >
               {l}
@@ -3773,9 +4323,9 @@ export default function EchoHive() {
     }
   };
 
-  const handleCreate = async ({ title, content, category }) => {
+  const handleCreate = async ({ title, content, category, mediaFiles }) => {
     try {
-      await createPost({ title, content, categorySlug: category });
+      await createPost({ title, content, categorySlug: category, mediaFiles });
       setCreatingPost(false);
       refreshFeed();
       showToast("Posted to the feed");
@@ -3784,9 +4334,9 @@ export default function EchoHive() {
     }
   };
 
-  const handleAddComment = async (postId, content, parentId = null) => {
+  const handleAddComment = async (postId, content, parentId = null, mediaFile = null) => {
     try {
-      await addComment(postId, content, parentId);
+      await addComment(postId, content, parentId, mediaFile);
       setComments((prev) => ({ ...prev, [postId]: null }));
       fetchComments(postId).then((c) =>
         setComments((prev) => ({ ...prev, [postId]: c })),
