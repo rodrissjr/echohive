@@ -175,7 +175,7 @@ const MediaPicker = ({ items, onAdd, onRemove, max = MAX_POST_MEDIA }) => {
           e.target.value = "";
         }}
       />
-      <MediaGallery items={items} onRemove={onRemove} />
+      <MediaGallery items={items} onRemove={onRemove} maxHeight={180} />
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -1213,6 +1213,7 @@ const Header = ({ user, onLogout, onCreate, onNavigate }) => {
         </button>
         <button
           onClick={onCreate}
+          aria-label="New post"
           className="sm:hidden eh-btn eh-btn-accent"
           style={{ padding: 8 }}
         >
@@ -2592,6 +2593,7 @@ const CreatePost = ({ onClose, onSubmit }) => {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         padding: "32px 16px",
+        overflowY: "auto",
       }}
       onClick={onClose}
     >
@@ -2758,6 +2760,7 @@ const RepostModal = ({ post, onClose, onConfirm }) => {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         padding: "32px 16px",
+        overflowY: "auto",
       }}
       onClick={onClose}
     >
@@ -2864,6 +2867,7 @@ const ShareModal = ({ post, onClose, onCopy }) => {
         backdropFilter: "blur(12px)",
         WebkitBackdropFilter: "blur(12px)",
         padding: "32px 16px",
+        overflowY: "auto",
       }}
       onClick={onClose}
     >
