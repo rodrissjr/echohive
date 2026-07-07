@@ -772,54 +772,6 @@ const GlobalStyles = () => (
       transition: opacity .2s ease, transform .2s ease, filter .2s ease;
       pointer-events: none;
     }
-    @keyframes eh-orb-float {
-      0%   { transform: translate(0, 0) scale(1); }
-      33%  { transform: translate(36px, -44px) scale(1.15); }
-      66%  { transform: translate(-24px, 28px) scale(0.92); }
-      100% { transform: translate(0, 0) scale(1); }
-    }
-    .eh-auth-orb {
-      position: absolute;
-      border-radius: 999px;
-      filter: blur(80px);
-      pointer-events: none;
-      animation: eh-orb-float 14s ease-in-out infinite;
-      z-index: 0;
-      will-change: transform;
-    }
-    @keyframes eh-aurora-spin {
-      from { transform: rotate(0deg); }
-      to { transform: rotate(360deg); }
-    }
-    .eh-aurora-spin {
-      position: absolute;
-      inset: -40%;
-      background: conic-gradient(
-        from 0deg,
-        rgba(0, 240, 255, 0.08),
-        rgba(179, 102, 255, 0.1),
-        rgba(255, 51, 153, 0.07),
-        rgba(0, 255, 136, 0.06),
-        rgba(0, 240, 255, 0.08)
-      );
-      filter: blur(100px);
-      animation: eh-aurora-spin 40s linear infinite;
-      pointer-events: none;
-      z-index: 0;
-    }
-    @keyframes eh-glow-shift {
-      0%, 100% { opacity: 0.55; transform: scale(1) rotate(0deg); }
-      50% { opacity: 1; transform: scale(1.06) rotate(4deg); }
-    }
-    .eh-card-glow {
-      position: absolute;
-      inset: -50px;
-      background: linear-gradient(135deg, rgba(0,240,255,0.4) 0%, rgba(179,102,255,0.4) 55%, rgba(255,51,153,0.3) 100%);
-      filter: blur(50px);
-      border-radius: 40px;
-      z-index: 0;
-      animation: eh-glow-shift 9s ease-in-out infinite;
-    }
     @keyframes eh-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .eh-fade-in { animation: eh-fade-in .25s ease both; }
     @keyframes eh-pop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
@@ -3639,54 +3591,6 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
       style={{ padding: 20, position: "relative", overflow: "hidden" }}
     >
       <GlobalStyles />
-      <div className="eh-aurora-spin" />
-      <div
-        className="eh-auth-orb"
-        style={{
-          width: 460,
-          height: 460,
-          top: "-8%",
-          left: "-6%",
-          background: "radial-gradient(circle, rgba(0,240,255,0.34) 0%, transparent 70%)",
-          animationDuration: "15s",
-        }}
-      />
-      <div
-        className="eh-auth-orb"
-        style={{
-          width: 560,
-          height: 560,
-          top: "8%",
-          right: "4%",
-          background: "radial-gradient(circle, rgba(179,102,255,0.3) 0%, transparent 70%)",
-          animationDuration: "19s",
-          animationDelay: "-5s",
-        }}
-      />
-      <div
-        className="eh-auth-orb"
-        style={{
-          width: 420,
-          height: 420,
-          bottom: "-10%",
-          left: "18%",
-          background: "radial-gradient(circle, rgba(255,51,153,0.24) 0%, transparent 70%)",
-          animationDuration: "17s",
-          animationDelay: "-11s",
-        }}
-      />
-      <div
-        className="eh-auth-orb"
-        style={{
-          width: 340,
-          height: 340,
-          bottom: "6%",
-          right: "22%",
-          background: "radial-gradient(circle, rgba(0,255,136,0.16) 0%, transparent 70%)",
-          animationDuration: "13s",
-          animationDelay: "-3s",
-        }}
-      />
       <div
         className="w-full grid md:grid-cols-2 gap-10 items-center"
         style={{ maxWidth: 980, position: "relative", zIndex: 1 }}
@@ -3789,21 +3693,17 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           </div>
         </div>
 
-        <div style={{ position: "relative" }}>
-          <div className="eh-card-glow" />
           <div
             className="eh-card eh-fade-up"
             style={{
-              position: "relative",
-              zIndex: 1,
               padding: "40px 40px 36px",
               borderRadius: 20,
               animationDelay: "120ms",
-              background: "rgba(12, 18, 35, 0.42)",
+              background: "rgba(12, 18, 35, 0.55)",
               backdropFilter: "blur(28px) saturate(180%)",
               WebkitBackdropFilter: "blur(28px) saturate(180%)",
-              border: "1px solid rgba(255, 255, 255, 0.12)",
-              boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255,255,255,0.08)",
+              border: "1px solid rgba(0, 240, 255, 0.15)",
+              boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45), 0 0 40px rgba(0, 240, 255, 0.06), inset 0 1px 0 rgba(255,255,255,0.05)",
             }}
           >
           <div className="md:hidden mb-6">
@@ -4319,7 +4219,6 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           )}
           </div>
           </div>
-        </div>
         </div>
       </div>
       {comingSoon && (
