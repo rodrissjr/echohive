@@ -765,6 +765,13 @@ const GlobalStyles = () => (
     .eh-fade-up { animation: eh-fade-up .45s cubic-bezier(0.16, 1, 0.3, 1) both; }
     @keyframes eh-mode-switch { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(2px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
     .eh-mode-switch { animation: eh-mode-switch .4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    .eh-form-out {
+      opacity: 0;
+      transform: translateY(-6px) scale(.99);
+      filter: blur(3px);
+      transition: opacity .2s ease, transform .2s ease, filter .2s ease;
+      pointer-events: none;
+    }
     @keyframes eh-orb-float {
       0%, 100% { transform: translate(0, 0) scale(1); }
       50% { transform: translate(24px, -32px) scale(1.08); }
@@ -3474,10 +3481,40 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
     university: "Institute of Accountancy Arusha",
   });
 
+  // Two-phase mode transition: the current form fades/blurs out, the card
+  // height glides to the next form's size, then the new form slides in.
+  const [phase, setPhase] = useState("in"); // 'in' | 'out'
+  const [formHeight, setFormHeight] = useState("auto");
+  const formWrapRef = useRef(null);
+  const formInnerRef = useRef(null);
+
   const switchMode = (m) => {
-    setMode(m);
-    setLoading(false);
+    if (m === mode) return;
+    if (formWrapRef.current) {
+      // Pin the current height in px so it can animate to the next value.
+      setFormHeight(formWrapRef.current.offsetHeight);
+    }
+    setPhase("out");
+    setTimeout(() => {
+      setMode(m);
+      setLoading(false);
+      setShowPw(false);
+      setPhase("in");
+    }, 200);
   };
+
+  useEffect(() => {
+    if (phase !== "in" || formHeight === "auto") return;
+    // New form is rendered inside the pinned-height wrapper — measure it on
+    // the next frame and let the height transition carry us there.
+    const raf = requestAnimationFrame(() => {
+      if (formInnerRef.current) {
+        setFormHeight(formInnerRef.current.scrollHeight);
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, phase]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -3706,7 +3743,22 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
             <Logo />
           </div>
 
-          <div key={mode} className="eh-mode-switch">
+          <div
+            ref={formWrapRef}
+            style={{
+              height: formHeight,
+              overflow: formHeight === "auto" ? "visible" : "hidden",
+              transition: "height .45s cubic-bezier(0.16, 1, 0.3, 1)",
+            }}
+            onTransitionEnd={(e) => {
+              if (e.propertyName === "height") setFormHeight("auto");
+            }}
+          >
+          <div
+            ref={formInnerRef}
+            key={mode}
+            className={phase === "out" ? "eh-form-out" : "eh-mode-switch"}
+          >
           <div
             className="font-display"
             style={{
@@ -4193,6 +4245,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               </button>
             </form>
           )}
+          </div>
           </div>
         </div>
       </div>
