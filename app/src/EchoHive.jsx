@@ -60,7 +60,20 @@ import {
   adminFetchUsers,
   adminBanUser,
   updateAvatar,
+  fetchPostById,
+  subscribeToFeed,
+  subscribeToComments,
 } from "./supabaseClient";
+import {
+  MAX_POST_MEDIA,
+  MAX_MEDIA_BYTES,
+  LIKE_TYPE,
+  timeAgo,
+  formatNum,
+  initials,
+  totalReactions,
+  validateMediaFile,
+} from "./utils";
 
 // =====================================================================
 // EchoHive — Your Voice. Your Campus.
@@ -69,18 +82,6 @@ import {
 // =====================================================================
 // MEDIA — shared attach/gallery helpers for posts + comments
 // =====================================================================
-const MAX_POST_MEDIA = 6;
-const MAX_MEDIA_BYTES = 25 * 1024 * 1024;
-
-const validateMediaFile = (file) => {
-  if (!/^image\/|^video\//.test(file.type)) {
-    return `"${file.name}" isn't an image or video`;
-  }
-  if (file.size > MAX_MEDIA_BYTES) {
-    return `"${file.name}" is larger than 25MB`;
-  }
-  return null;
-};
 
 const MediaGallery = ({ items, onRemove, maxHeight = 340 }) => {
   if (!items || items.length === 0) return null;
@@ -331,11 +332,6 @@ const CATEGORIES = [
     bg: "rgba(255, 51, 102, 0.08)",
   },
 ];
-
-// Single Instagram-style like — reactions in the DB still carry a `type`
-// column for backward compatibility with older data, but the app only
-// ever writes "love" now.
-const LIKE_TYPE = "love";
 
 const UNIVERSITIES = [
   "Institute of Accountancy Arusha",
@@ -622,33 +618,7 @@ const INITIAL_USERS = [
 ];
 
 // ---------- Helpers ----------
-const timeAgo = (ts) => {
-  const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60) return `${s}s ago`;
-  const m = Math.floor(s / 60);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  const d = Math.floor(h / 24);
-  if (d < 30) return `${d}d ago`;
-  return new Date(ts).toLocaleDateString();
-};
-const formatNum = (n) => {
-  if (n < 1000) return n.toString();
-  if (n < 10000) return (n / 1000).toFixed(1).replace(/\.0$/, "") + "k";
-  if (n < 1000000) return Math.floor(n / 1000) + "k";
-  return (n / 1000000).toFixed(1) + "M";
-};
 const getCategory = (id) => CATEGORIES.find((c) => c.id === id);
-const initials = (name = "") =>
-  name
-    .split(" ")
-    .map((p) => p[0])
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-const totalReactions = (post) =>
-  Object.values(post.reactions).reduce((a, b) => a + b, 0);
 
 // ---------- Global styles ----------
 const GlobalStyles = () => (
@@ -4347,6 +4317,70 @@ export default function EchoHive() {
     }
   }, [posts, selectedPost]);
 
+  // Realtime — engagement counters are denormalized onto the posts row by DB
+  // triggers, so subscribing to that one table keeps everyone's feed numbers
+  // (and new/deleted posts) live without polling.
+  const activeCategoryRef = useRef(activeCategory);
+  useEffect(() => {
+    activeCategoryRef.current = activeCategory;
+  }, [activeCategory]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToFeed({
+      onInsert: async (row) => {
+        try {
+          const full = await fetchPostById(row.post_id);
+          setPosts((prev) => {
+            if (prev.some((p) => p.id === full.id)) return prev;
+            const cat = activeCategoryRef.current;
+            if (cat !== "all" && full.category !== cat) return prev;
+            return [full, ...prev];
+          });
+        } catch (e) {
+          console.error("Realtime post fetch failed:", e);
+        }
+      },
+      onUpdate: (row) => {
+        setPosts((prev) =>
+          prev.map((p) =>
+            p.id === row.post_id
+              ? {
+                  ...p,
+                  title: row.title,
+                  content: row.content,
+                  likeCount: row.reaction_count,
+                  comments: row.comment_count,
+                  views: row.view_count,
+                  reposts: row.repost_count,
+                }
+              : p,
+          ),
+        );
+      },
+      onDelete: (row) => {
+        setPosts((prev) => prev.filter((p) => p.id !== row.post_id));
+        setSelectedPost((prev) => (prev?.id === row.post_id ? null : prev));
+      },
+    });
+    return unsubscribe;
+  }, []);
+
+  // Realtime — new comments/replies stream into whichever post is open
+  useEffect(() => {
+    if (!selectedPost) return;
+    const postId = selectedPost.id;
+    const unsubscribe = subscribeToComments(postId, async () => {
+      try {
+        const fresh = await fetchComments(postId);
+        setComments((prev) => ({ ...prev, [postId]: fresh }));
+      } catch (e) {
+        console.error("Realtime comment fetch failed:", e);
+      }
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedPost?.id]);
+
   const refreshFeed = async (cat, { silent = false } = {}) => {
     const slug =
       cat !== undefined
@@ -4381,15 +4415,11 @@ export default function EchoHive() {
     if (!post) return;
     const wasLiked = !!post.userReaction;
     const prevType = post.userReaction;
-    patchPost(postId, (p) => {
-      const reactions = { ...p.reactions };
-      if (wasLiked) {
-        reactions[prevType] = Math.max(0, (reactions[prevType] || 0) - 1);
-      } else {
-        reactions[LIKE_TYPE] = (reactions[LIKE_TYPE] || 0) + 1;
-      }
-      return { ...p, reactions, userReaction: wasLiked ? null : LIKE_TYPE };
-    });
+    patchPost(postId, (p) => ({
+      ...p,
+      likeCount: Math.max(0, p.likeCount + (wasLiked ? -1 : 1)),
+      userReaction: wasLiked ? null : LIKE_TYPE,
+    }));
     try {
       await toggleReaction(postId, wasLiked ? prevType : LIKE_TYPE);
     } catch (e) {

@@ -577,6 +577,17 @@ begin
 end$$;
 
 -- ============================================================================
+-- 14b. REALTIME
+-- ============================================================================
+do $$ begin
+    alter publication supabase_realtime add table public.posts;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+    alter publication supabase_realtime add table public.comments;
+exception when duplicate_object then null; end $$;
+
+-- ============================================================================
 -- 15. POST-INSTALL CHECKLIST
 -- ============================================================================
 -- 1. Sign up your admin via the app, then promote:

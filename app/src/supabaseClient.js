@@ -199,12 +199,6 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
     const postIds = data.map(p => p.post_id);
     const { data: { user } } = await supabase.auth.getUser();
 
-    // Pull reaction breakdown (everyone's reactions, grouped by type)
-    const { data: rxBreakdown } = await supabase
-        .from('post_reactions_view')
-        .select('post_id, type, cnt')
-        .in('post_id', postIds);
-
     // Pull media attachments for every post in this page
     const { data: mediaRows } = await supabase
         .from('post_media')
@@ -229,14 +223,18 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
         userReposts   = new Set((myRp || []).map(r => r.post_id));
     }
 
-    // Build a per-post reaction breakdown { like:0, love:0, ... }
-    const rxByPost = {};
-    for (const row of (rxBreakdown || [])) {
-        rxByPost[row.post_id] ??= { like: 0, love: 0, laugh: 0, wow: 0, sad: 0, angry: 0 };
-        rxByPost[row.post_id][row.type] = row.cnt;
-    }
+    return data.map(p => shapeFeedRow(p, {
+        userReaction: userReactions[p.post_id] || null,
+        media:        mediaByPost[p.post_id] || [],
+        isBookmarked: userBookmarks.has(p.post_id),
+        isReposted:   userReposts.has(p.post_id),
+    }));
+}
 
-    return data.map(p => ({
+// Shared row -> app-shape mapper for both fetchFeed() and single-post lookups
+// (e.g. hydrating a post that just arrived over realtime).
+function shapeFeedRow(p, extra) {
+    return {
         id:       p.post_id,
         title:    p.title,
         content:  p.content,
@@ -250,15 +248,39 @@ export async function fetchFeed({ categorySlug = null, sort = 'recent', limit = 
             avatarUrl:  p.author_avatar_url || null,
         },
         createdAt:    new Date(p.created_at).getTime(),
-        reactions:    rxByPost[p.post_id] || { like: 0, love: 0, laugh: 0, wow: 0, sad: 0, angry: 0 },
-        userReaction: userReactions[p.post_id] || null,
-        media:        mediaByPost[p.post_id] || [],
+        likeCount:    p.reaction_count,
+        userReaction: null,
+        media:        [],
         comments:     p.comment_count,
         views:        p.view_count,
         reposts:      p.repost_count,
-        isBookmarked: userBookmarks.has(p.post_id),
-        isReposted:   userReposts.has(p.post_id),
-    }));
+        isBookmarked: false,
+        isReposted:   false,
+        ...extra,
+    };
+}
+
+// Fetches one post in the same shape fetchFeed() returns — used to hydrate
+// a brand-new post that just arrived over the realtime "posts" channel.
+export async function fetchPostById(postId) {
+    const { data: p, error } = await supabase
+        .from('feed_posts').select('*').eq('post_id', postId).single();
+    if (error) throw error;
+
+    const { data: { user } } = await supabase.auth.getUser();
+    const [{ data: mediaRows }, myRx, myBm, myRp] = await Promise.all([
+        supabase.from('post_media').select('url, type').eq('post_id', postId).order('position'),
+        user ? supabase.from('reactions').select('type').eq('post_id', postId).eq('user_id', user.id).maybeSingle() : { data: null },
+        user ? supabase.from('bookmarks').select('post_id').eq('post_id', postId).eq('user_id', user.id).maybeSingle() : { data: null },
+        user ? supabase.from('reposts').select('post_id').eq('post_id', postId).eq('user_id', user.id).maybeSingle() : { data: null },
+    ]);
+
+    return shapeFeedRow(p, {
+        userReaction: myRx.data?.type || null,
+        media:        (mediaRows || []).map(m => ({ url: m.url, type: m.type })),
+        isBookmarked: !!myBm.data,
+        isReposted:   !!myRp.data,
+    });
 }
 
 export async function createPost({ title, content, categorySlug, mediaFiles = [] }) {
@@ -429,13 +451,34 @@ export async function adminBanUser(userId, banned = true) {
 }
 
 // ---------------------------------------------------------------------------
-// 12. REAL-TIME (optional)
+// 12. REAL-TIME
+//     Posts' engagement counters (reaction/comment/repost/view counts) are
+//     denormalized onto the posts row by DB triggers, so a single
+//     postgres_changes subscription on "posts" is enough to keep every
+//     viewer's feed numbers live without polling.
 // ---------------------------------------------------------------------------
-export function subscribeToPosts(onInsert) {
+export function subscribeToFeed({ onInsert, onUpdate, onDelete }) {
     const channel = supabase
-        .channel('public:posts')
+        .channel('public:posts:feed')
         .on('postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'posts' },
+            (payload) => onInsert?.(payload.new))
+        .on('postgres_changes',
+            { event: 'UPDATE', schema: 'public', table: 'posts' },
+            (payload) => onUpdate?.(payload.new))
+        .on('postgres_changes',
+            { event: 'DELETE', schema: 'public', table: 'posts' },
+            (payload) => onDelete?.(payload.old))
+        .subscribe();
+    return () => supabase.removeChannel(channel);
+}
+
+// New comments/replies on one open post, keyed by post_id.
+export function subscribeToComments(postId, onInsert) {
+    const channel = supabase
+        .channel(`public:comments:${postId}`)
+        .on('postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` },
             (payload) => onInsert(payload.new))
         .subscribe();
     return () => supabase.removeChannel(channel);
