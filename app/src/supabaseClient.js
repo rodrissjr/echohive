@@ -43,10 +43,25 @@ export async function signUp({ email, password, username, displayName, universit
                 display_name: displayName,
                 university,
             },
+            // Where Supabase sends the user after they click the confirmation
+            // link — works for local dev, Vercel previews, and production
+            // alike as long as this origin is in the Auth "Redirect URLs" list.
+            emailRedirectTo: window.location.origin,
         },
     });
     if (error) throw error;
     return data;
+}
+
+// Re-sends the "confirm your email" link — used when a user is stuck on
+// the "check your inbox" screen and didn't get (or lost) the first one.
+export async function resendConfirmationEmail(email) {
+    const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: window.location.origin },
+    });
+    if (error) throw error;
 }
 
 export async function signIn({ email, password }) {
@@ -451,6 +466,95 @@ export async function adminBanUser(userId, banned = true) {
 }
 
 // ---------------------------------------------------------------------------
+// 11b. REPORTS — flagging posts/comments for moderator review
+// ---------------------------------------------------------------------------
+export async function reportContent({ postId = null, commentId = null, reason, details = null }) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error('Not authenticated');
+
+    const { error } = await supabase.from('reports').insert({
+        post_id: postId,
+        comment_id: commentId,
+        reporter_id: user.id,
+        reason,
+        details,
+    });
+    if (error) throw error;
+}
+
+export async function adminFetchReports({ status = 'open' } = {}) {
+    let query = supabase
+        .from('reports')
+        .select(`
+            report_id, reason, details, status, created_at, post_id, comment_id,
+            reporter:profiles!reporter_id ( username, display_name ),
+            post:posts!post_id ( post_id, title, user_id ),
+            comment:comments!comment_id ( comment_id, content, post_id, user_id )
+        `)
+        .order('created_at', { ascending: false });
+    if (status) query = query.eq('status', status);
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    return data.map(r => ({
+        id:        r.report_id,
+        reason:    r.reason,
+        details:   r.details,
+        status:    r.status,
+        createdAt: new Date(r.created_at).getTime(),
+        reporter:  { username: r.reporter.username, display: r.reporter.display_name },
+        post:      r.post ? { id: r.post.post_id, title: r.post.title, authorId: r.post.user_id } : null,
+        comment:   r.comment
+            ? { id: r.comment.comment_id, content: r.comment.content, postId: r.comment.post_id, authorId: r.comment.user_id }
+            : null,
+    }));
+}
+
+export async function adminResolveReport(reportId, status) {
+    const { error } = await supabase.from('reports').update({ status }).eq('report_id', reportId);
+    if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
+// 11c. NOTIFICATIONS — rows are inserted only by DB triggers (see schema),
+//      never directly by the client.
+// ---------------------------------------------------------------------------
+export async function fetchNotifications(limit = 30) {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return [];
+
+    const { data, error } = await supabase
+        .from('notifications')
+        .select(`
+            notification_id, type, post_id, comment_id, is_read, created_at,
+            actor:profiles!actor_id ( username, display_name, avatar_url ),
+            post:posts!post_id ( title )
+        `)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(limit);
+    if (error) throw error;
+
+    return data.map(n => ({
+        id:        n.notification_id,
+        type:      n.type,
+        postId:    n.post_id,
+        commentId: n.comment_id,
+        isRead:    n.is_read,
+        createdAt: new Date(n.created_at).getTime(),
+        actor:     { username: n.actor.username, display: n.actor.display_name, avatarUrl: n.actor.avatar_url },
+        postTitle: n.post?.title || null,
+    }));
+}
+
+export async function markNotificationsRead(ids) {
+    if (!ids.length) return;
+    const { error } = await supabase.from('notifications').update({ is_read: true }).in('notification_id', ids);
+    if (error) throw error;
+}
+
+// ---------------------------------------------------------------------------
 // 12. REAL-TIME
 //     Posts' engagement counters (reaction/comment/repost/view counts) are
 //     denormalized onto the posts row by DB triggers, so a single
@@ -479,6 +583,17 @@ export function subscribeToComments(postId, onInsert) {
         .channel(`public:comments:${postId}`)
         .on('postgres_changes',
             { event: 'INSERT', schema: 'public', table: 'comments', filter: `post_id=eq.${postId}` },
+            (payload) => onInsert(payload.new))
+        .subscribe();
+    return () => supabase.removeChannel(channel);
+}
+
+// New notification rows for one user — powers the live bell badge.
+export function subscribeToNotifications(userId, onInsert) {
+    const channel = supabase
+        .channel(`public:notifications:${userId}`)
+        .on('postgres_changes',
+            { event: 'INSERT', schema: 'public', table: 'notifications', filter: `user_id=eq.${userId}` },
             (payload) => onInsert(payload.new))
         .subscribe();
     return () => supabase.removeChannel(channel);

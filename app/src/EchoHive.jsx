@@ -39,6 +39,7 @@ import {
   Paperclip,
   Heart,
   Camera,
+  Flag,
 } from "lucide-react";
 import {
   getCurrentUser,
@@ -46,6 +47,7 @@ import {
   signIn,
   signUp,
   signOut,
+  resendConfirmationEmail,
   sendPasswordResetEmail,
   updatePassword,
   fetchFeed,
@@ -63,6 +65,12 @@ import {
   fetchPostById,
   subscribeToFeed,
   subscribeToComments,
+  reportContent,
+  adminFetchReports,
+  adminResolveReport,
+  fetchNotifications,
+  markNotificationsRead,
+  subscribeToNotifications,
 } from "./supabaseClient";
 import {
   MAX_POST_MEDIA,
@@ -307,6 +315,8 @@ const SingleMediaAttach = ({ file, onPick, onClear }) => {
     </div>
   );
 };
+
+const FEED_PAGE_SIZE = 20;
 
 const CATEGORIES = [
   {
@@ -1017,8 +1027,29 @@ const LikeSummary = ({ post, onClick }) => {
 // =====================================================================
 // HEADER
 // =====================================================================
-const Header = ({ user, onLogout, onCreate, onNavigate, onOpenSettings }) => {
+const notificationText = (type) =>
+  ({
+    like: "liked your post",
+    comment: "commented on your post",
+    reply: "replied to your comment",
+    repost: "reposted your post",
+  })[type] || "interacted with your post";
+
+const Header = ({
+  user,
+  onLogout,
+  onCreate,
+  onNavigate,
+  onOpenSettings,
+  searchQuery,
+  onSearchChange,
+  notifications,
+  unreadCount,
+  onOpenNotifications,
+  onNotificationClick,
+}) => {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   return (
     <header
       style={{
@@ -1052,10 +1083,20 @@ const Header = ({ user, onLogout, onCreate, onNavigate, onOpenSettings }) => {
         >
           <Search size={15} style={{ color: "var(--muted)" }} />
           <input
+            value={searchQuery}
+            onChange={(e) => {
+              onSearchChange(e.target.value);
+              onNavigate("feed");
+            }}
             className="font-body flex-1 bg-transparent focus:outline-none text-sm"
             placeholder="Search posts, people, categories…"
             style={{ color: "var(--ink)" }}
           />
+          {searchQuery && (
+            <button onClick={() => onSearchChange("")} aria-label="Clear search">
+              <X size={13} style={{ color: "var(--muted)" }} />
+            </button>
+          )}
         </div>
 
         <div className="flex-1 md:hidden" />
@@ -1077,25 +1118,123 @@ const Header = ({ user, onLogout, onCreate, onNavigate, onOpenSettings }) => {
           <Plus size={16} strokeWidth={2.5} />
         </button>
 
-        <button className="relative" aria-label="Notifications" style={{ padding: 6 }}>
-          <Bell size={18} style={{ color: "var(--ink-2)" }} />
-          <span
-            className="absolute -top-0.5 -right-0.5 font-mono flex items-center justify-center eh-glow-pulse"
-            style={{
-              background: "var(--danger)",
-              color: "white",
-              minWidth: 16,
-              height: 16,
-              borderRadius: 8,
-              fontSize: 9,
-              fontWeight: 700,
-              padding: "0 4px",
-              boxShadow: "0 0 8px rgba(255, 51, 102, 0.4)",
+        <div className="relative">
+          <button
+            className="relative"
+            aria-label="Notifications"
+            style={{ padding: 6 }}
+            onClick={() => {
+              const next = !notifOpen;
+              setNotifOpen(next);
+              if (next) onOpenNotifications();
             }}
           >
-            3
-          </span>
-        </button>
+            <Bell size={18} style={{ color: "var(--ink-2)" }} />
+            {unreadCount > 0 && (
+              <span
+                className="absolute -top-0.5 -right-0.5 font-mono flex items-center justify-center eh-glow-pulse"
+                style={{
+                  background: "var(--danger)",
+                  color: "white",
+                  minWidth: 16,
+                  height: 16,
+                  borderRadius: 8,
+                  fontSize: 9,
+                  fontWeight: 700,
+                  padding: "0 4px",
+                  boxShadow: "0 0 8px rgba(255, 51, 102, 0.4)",
+                }}
+              >
+                {unreadCount > 9 ? "9+" : unreadCount}
+              </span>
+            )}
+          </button>
+          {notifOpen && (
+            <>
+              <div
+                className="fixed inset-0 z-10"
+                onClick={() => setNotifOpen(false)}
+              />
+              <div
+                className="absolute right-0 mt-2 eh-card eh-fade-in"
+                style={{
+                  width: 320,
+                  maxHeight: 420,
+                  overflowY: "auto",
+                  zIndex: 20,
+                  padding: 6,
+                  background: "rgba(12, 18, 35, 0.95)",
+                  boxShadow: "0 8px 40px rgba(0,0,0,0.5), 0 0 20px rgba(0, 240, 255, 0.04)",
+                }}
+              >
+                <div
+                  className="font-mono"
+                  style={{
+                    padding: "10px 12px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    color: "var(--muted)",
+                  }}
+                >
+                  Notifications
+                </div>
+                {notifications.length === 0 ? (
+                  <div
+                    className="font-body"
+                    style={{ padding: "24px 12px", textAlign: "center", fontSize: 13, color: "var(--muted)" }}
+                  >
+                    No notifications yet
+                  </div>
+                ) : (
+                  notifications.map((n) => (
+                    <button
+                      key={n.id}
+                      onClick={() => {
+                        onNotificationClick(n);
+                        setNotifOpen(false);
+                      }}
+                      className="flex items-start gap-2.5 w-full text-left"
+                      style={{
+                        padding: "10px 12px",
+                        borderRadius: 8,
+                        background: n.isRead ? "transparent" : "rgba(0, 240, 255, 0.05)",
+                      }}
+                    >
+                      <Avatar name={n.actor.display} size={30} src={n.actor.avatarUrl} />
+                      <div className="flex-1 min-w-0">
+                        <div className="font-body" style={{ fontSize: 13, color: "var(--ink)", lineHeight: 1.4 }}>
+                          <span style={{ fontWeight: 600 }}>{n.actor.display}</span>{" "}
+                          {notificationText(n.type)}
+                          {n.postTitle && (
+                            <span style={{ color: "var(--muted)" }}> "{n.postTitle}"</span>
+                          )}
+                        </div>
+                        <div className="font-mono" style={{ fontSize: 10.5, color: "var(--muted)", marginTop: 2 }}>
+                          {timeAgo(n.createdAt)}
+                        </div>
+                      </div>
+                      {!n.isRead && (
+                        <span
+                          style={{
+                            width: 7,
+                            height: 7,
+                            borderRadius: 4,
+                            background: "var(--accent)",
+                            marginTop: 5,
+                            flexShrink: 0,
+                            boxShadow: "0 0 6px var(--accent)",
+                          }}
+                        />
+                      )}
+                    </button>
+                  ))
+                )}
+              </div>
+            </>
+          )}
+        </div>
 
         <div className="relative">
           <button onClick={() => setMenuOpen((v) => !v)}>
@@ -1570,6 +1709,7 @@ const PostCard = ({
   onBookmark,
   onShare,
   onRepost,
+  onReport,
   isAdmin,
   currentUserId,
   index,
@@ -1698,29 +1838,55 @@ const PostCard = ({
           />
         </div>
 
-        {(isAdmin || isOwner) && (
-          <button
-            onClick={() => onDelete(post.id)}
-            className="flex items-center justify-center"
-            style={{
-              fontSize: 12,
-              color: "var(--muted)",
-              padding: 6,
-              borderRadius: 6,
-              transition: "all .15s ease",
-            }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.color = "var(--danger)";
-              e.currentTarget.style.background = "rgba(255, 51, 102, 0.1)";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.color = "var(--muted)";
-              e.currentTarget.style.background = "transparent";
-            }}
-          >
-            <Trash2 size={13} />
-          </button>
-        )}
+        <div className="flex items-center gap-1">
+          {!isOwner && !isAdmin && (
+            <button
+              onClick={() => onReport(post.id)}
+              title="Report post"
+              className="flex items-center justify-center"
+              style={{
+                fontSize: 12,
+                color: "var(--muted)",
+                padding: 6,
+                borderRadius: 6,
+                transition: "all .15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--danger)";
+                e.currentTarget.style.background = "rgba(255, 51, 102, 0.1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--muted)";
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <Flag size={13} />
+            </button>
+          )}
+          {(isAdmin || isOwner) && (
+            <button
+              onClick={() => onDelete(post.id)}
+              className="flex items-center justify-center"
+              style={{
+                fontSize: 12,
+                color: "var(--muted)",
+                padding: 6,
+                borderRadius: 6,
+                transition: "all .15s ease",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.color = "var(--danger)";
+                e.currentTarget.style.background = "rgba(255, 51, 102, 0.1)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.color = "var(--muted)";
+                e.currentTarget.style.background = "transparent";
+              }}
+            >
+              <Trash2 size={13} />
+            </button>
+          )}
+        </div>
       </footer>
     </article>
   );
@@ -1783,6 +1949,7 @@ const Feed = ({
   onBookmark,
   onShare,
   onRepost,
+  onReport,
   isAdmin,
   currentUserId,
   onCreate,
@@ -1790,6 +1957,10 @@ const Feed = ({
   subtitle,
   emptyState,
   loading,
+  searchQuery,
+  hasMore,
+  loadingMore,
+  onLoadMore,
 }) => {
   const [sort, setSort] = useState("recent");
 
@@ -1798,11 +1969,19 @@ const Feed = ({
       activeCategory === "all"
         ? posts
         : posts.filter((p) => p.category === activeCategory);
+    const q = searchQuery?.trim().toLowerCase();
+    if (q) {
+      list = list.filter((p) =>
+        [p.title, p.content, p.author.display, p.author.username, getCategory(p.category)?.name]
+          .filter(Boolean)
+          .some((field) => field.toLowerCase().includes(q)),
+      );
+    }
     if (sort === "popular")
       list = [...list].sort((a, b) => totalReactions(b) - totalReactions(a));
     else list = [...list].sort((a, b) => b.createdAt - a.createdAt);
     return list;
-  }, [posts, activeCategory, sort]);
+  }, [posts, activeCategory, sort, searchQuery]);
 
   const cat = activeCategory === "all" ? null : getCategory(activeCategory);
 
@@ -1904,15 +2083,17 @@ const Feed = ({
                 marginBottom: 4,
               }}
             >
-              {emptyState || "Nothing here yet"}
+              {searchQuery ? "No matches" : emptyState || "Nothing here yet"}
             </div>
             <div
               className="font-body"
               style={{ fontSize: 13, color: "var(--muted)" }}
             >
-              Be the first to share something in this space.
+              {searchQuery
+                ? `Nothing found for "${searchQuery}".`
+                : "Be the first to share something in this space."}
             </div>
-            {onCreate && (
+            {!searchQuery && onCreate && (
               <button
                 onClick={onCreate}
                 className="eh-btn eh-btn-primary mt-4 text-sm"
@@ -1934,12 +2115,32 @@ const Feed = ({
               onBookmark={onBookmark}
               onShare={onShare}
               onRepost={onRepost}
+              onReport={onReport}
               isAdmin={isAdmin}
               currentUserId={currentUserId}
             />
           ))
         )}
       </div>
+
+      {!loading && !searchQuery && filtered.length > 0 && hasMore && (
+        <div className="flex justify-center mt-6">
+          <button
+            onClick={onLoadMore}
+            disabled={loadingMore}
+            className="eh-btn eh-btn-ghost text-sm flex items-center gap-2"
+            style={{ padding: "9px 20px" }}
+          >
+            {loadingMore ? (
+              <>
+                <Spinner size={13} /> Loading…
+              </>
+            ) : (
+              "Load more"
+            )}
+          </button>
+        </div>
+      )}
     </main>
   );
 };
@@ -2096,6 +2297,7 @@ const PostDetail = ({
   onBookmark,
   onShare,
   onRepost,
+  onReport,
   currentUser,
 }) => {
   const [text, setText] = useState("");
@@ -2260,6 +2462,9 @@ const PostDetail = ({
               fillWhenActive
               onClick={() => onBookmark(post.id)}
             />
+            {post.author.id !== currentUser.id && (
+              <ActionBtn icon={Flag} label="Report" onClick={() => onReport(post.id)} />
+            )}
           </div>
         </div>
 
@@ -2972,6 +3177,128 @@ const ProfileSettingsModal = ({ user, onClose, onSaved }) => {
 };
 
 // =====================================================================
+// REPORT CONTENT
+// =====================================================================
+const REPORT_REASONS = [
+  "Spam",
+  "Harassment or bullying",
+  "Hate speech",
+  "Misinformation",
+  "Inappropriate content",
+  "Something else",
+];
+
+const ReportModal = ({ onClose, onSubmit }) => {
+  const [reason, setReason] = useState(REPORT_REASONS[0]);
+  const [details, setDetails] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await onSubmit(reason, details.trim() || null);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
+      style={{
+        background: "rgba(3, 4, 8, 0.75)",
+        backdropFilter: "blur(12px)",
+        WebkitBackdropFilter: "blur(12px)",
+        padding: "32px 16px",
+        overflowY: "auto",
+      }}
+      onClick={onClose}
+    >
+      <div
+        className="eh-card w-full"
+        style={{ maxWidth: 420, boxShadow: "0 20px 60px rgba(0, 0, 0, 0.6), 0 0 40px rgba(0, 240, 255, 0.05)" }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          className="flex items-center justify-between"
+          style={{ padding: "16px 24px", borderBottom: "1px solid var(--line-2)" }}
+        >
+          <div
+            className="font-display"
+            style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}
+          >
+            Report content
+          </div>
+          <button onClick={onClose}>
+            <X size={18} style={{ color: "var(--muted)" }} />
+          </button>
+        </div>
+
+        <div style={{ padding: 24 }}>
+          <Label>Why are you reporting this?</Label>
+          <div className="space-y-1.5 mb-5">
+            {REPORT_REASONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setReason(r)}
+                className="flex items-center gap-2 w-full text-left font-body"
+                style={{
+                  padding: "9px 12px",
+                  borderRadius: 8,
+                  fontSize: 13.5,
+                  color: reason === r ? "var(--accent)" : "var(--ink-2)",
+                  background: reason === r ? "rgba(0, 240, 255, 0.06)" : "transparent",
+                  border: `1px solid ${reason === r ? "rgba(0, 240, 255, 0.25)" : "var(--glass-border)"}`,
+                }}
+              >
+                {r}
+              </button>
+            ))}
+          </div>
+
+          <Label>Additional details (optional)</Label>
+          <textarea
+            value={details}
+            onChange={(e) => setDetails(e.target.value)}
+            placeholder="Anything that would help a moderator review this."
+            rows={3}
+            maxLength={500}
+            className="eh-input w-full font-body"
+            style={{ padding: "10px 12px", fontSize: 13.5, resize: "vertical" }}
+          />
+
+          <div className="flex justify-end gap-2 mt-6">
+            <button
+              onClick={onClose}
+              disabled={submitting}
+              className="eh-btn eh-btn-ghost text-sm"
+              style={{ padding: "8px 16px" }}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={submit}
+              disabled={submitting}
+              className="eh-btn eh-btn-primary text-sm flex items-center gap-2"
+              style={{ padding: "8px 20px" }}
+            >
+              {submitting ? (
+                <>
+                  <Spinner size={13} color="#06080F" /> Reporting…
+                </>
+              ) : (
+                "Submit report"
+              )}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// =====================================================================
 // AUTH — login, register, forgot password, reset
 // =====================================================================
 const toUserShape = (res) => ({
@@ -3022,14 +3349,33 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
     if (loading) return;
     setLoading(true);
     try {
-      await signUp({
+      const data = await signUp({
         email: form.email,
         password: form.password,
         username: form.username,
         displayName: form.display,
         university: form.university,
       });
-      toast("Account created. Check your email to confirm.");
+      if (data.session) {
+        // Email confirmation is off (or already satisfied) — log straight in.
+        const res = await getCurrentUser();
+        if (res) onLogin(toUserShape(res));
+        else switchMode("login");
+      } else {
+        switchMode("check-email");
+      }
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  const handleResendConfirmation = async () => {
+    if (loading) return;
+    setLoading(true);
+    try {
+      await resendConfirmationEmail(form.email);
+      toast(`Confirmation email resent to ${form.email}`);
     } catch (err) {
       toast(err.message);
     } finally {
@@ -3197,6 +3543,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           >
             {mode === "login" && "Welcome back"}
             {mode === "register" && "Create account"}
+            {mode === "check-email" && "One more step"}
             {mode === "forgot" && "Forgot password"}
             {mode === "reset" && "Set a new password"}
           </div>
@@ -3211,6 +3558,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           >
             {mode === "login" && "Sign in to EchoHive"}
             {mode === "register" && "Join the conversation"}
+            {mode === "check-email" && "Confirm your email"}
             {mode === "forgot" && "We'll send a reset link"}
             {mode === "reset" && "Almost done"}
           </h2>
@@ -3470,6 +3818,64 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 </button>
               </div>
             </form>
+          )}
+
+          {mode === "check-email" && (
+            <div className="space-y-5">
+              <div className="flex justify-center">
+                <div
+                  className="flex items-center justify-center"
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 999,
+                    background: "rgba(0, 240, 255, 0.08)",
+                    border: "1px solid rgba(0, 240, 255, 0.2)",
+                  }}
+                >
+                  <Mail size={24} style={{ color: "var(--accent)" }} />
+                </div>
+              </div>
+              <p
+                className="font-body text-center"
+                style={{ fontSize: 14, color: "var(--ink-2)", lineHeight: 1.6 }}
+              >
+                We sent a confirmation link to{" "}
+                <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                  {form.email}
+                </span>
+                . Click it to activate your account, then come back and sign
+                in.
+              </p>
+              <button
+                onClick={handleResendConfirmation}
+                disabled={loading}
+                className="eh-btn eh-btn-ghost w-full text-sm flex items-center justify-center gap-2"
+                style={{ padding: "10px" }}
+              >
+                {loading ? (
+                  <>
+                    <Spinner size={14} /> Resending…
+                  </>
+                ) : (
+                  "Resend confirmation email"
+                )}
+              </button>
+              <div
+                className="font-body text-center"
+                style={{ fontSize: 13, color: "var(--ink-2)" }}
+              >
+                Already confirmed?{" "}
+                <button
+                  type="button"
+                  onClick={() => switchMode("login")}
+                  className="font-mono"
+                  style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12, letterSpacing: "0.02em" }}
+                >
+                  SIGN IN
+                </button>
+              </div>
+            </div>
           )}
 
           {mode === "forgot" && (
@@ -4096,13 +4502,154 @@ const AdminUsers = ({ users, onBan, onUnban }) => (
   </div>
 );
 
+const AdminReports = ({ reports, onResolve, onDeletePost }) => {
+  if (reports.length === 0) {
+    return (
+      <div className="eh-card" style={{ padding: 48, textAlign: "center" }}>
+        <Flag
+          size={22}
+          style={{ color: "var(--muted)", margin: "0 auto 10px" }}
+        />
+        <div
+          className="font-display"
+          style={{ fontSize: 15, fontWeight: 600, color: "var(--ink)" }}
+        >
+          No open reports
+        </div>
+        <div
+          className="font-body"
+          style={{ fontSize: 13, color: "var(--muted)", marginTop: 4 }}
+        >
+          Flagged posts and comments will show up here.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {reports.map((r) => (
+        <div key={r.id} className="eh-card" style={{ padding: 18 }}>
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div className="flex items-center gap-2 mb-1.5">
+                <span
+                  className="font-mono"
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 600,
+                    letterSpacing: "0.08em",
+                    textTransform: "uppercase",
+                    padding: "3px 8px",
+                    borderRadius: 6,
+                    color: "var(--danger)",
+                    background: "rgba(255, 51, 102, 0.08)",
+                    border: "1px solid rgba(255, 51, 102, 0.2)",
+                  }}
+                >
+                  {r.reason}
+                </span>
+                <span
+                  className="font-body"
+                  style={{ fontSize: 11.5, color: "var(--muted)" }}
+                >
+                  reported by @{r.reporter.username} · {timeAgo(r.createdAt)}
+                </span>
+              </div>
+              <div
+                className="font-body"
+                style={{ fontSize: 13.5, color: "var(--ink-2)", maxWidth: 560 }}
+              >
+                {r.post ? (
+                  <>
+                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                      Post:{" "}
+                    </span>
+                    {r.post.title}
+                  </>
+                ) : (
+                  <>
+                    <span style={{ color: "var(--ink)", fontWeight: 600 }}>
+                      Comment:{" "}
+                    </span>
+                    {r.comment.content}
+                  </>
+                )}
+              </div>
+              {r.details && (
+                <div
+                  className="font-body mt-1.5"
+                  style={{ fontSize: 12.5, color: "var(--muted)" }}
+                >
+                  “{r.details}”
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 shrink-0">
+              {r.post && (
+                <button
+                  onClick={() => onDeletePost(r.post.id)}
+                  className="font-mono flex items-center gap-1"
+                  style={{
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: "var(--danger)",
+                    padding: "6px 10px",
+                    borderRadius: 6,
+                    border: "1px solid rgba(255, 51, 102, 0.2)",
+                    background: "rgba(255, 51, 102, 0.05)",
+                  }}
+                >
+                  <Trash2 size={11} /> DELETE POST
+                </button>
+              )}
+              <button
+                onClick={() => onResolve(r.id, "dismissed")}
+                className="font-mono"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--muted)",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid var(--glass-border)",
+                }}
+              >
+                DISMISS
+              </button>
+              <button
+                onClick={() => onResolve(r.id, "resolved")}
+                className="font-mono flex items-center gap-1"
+                style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: "var(--success)",
+                  padding: "6px 10px",
+                  borderRadius: 6,
+                  border: "1px solid rgba(0, 230, 118, 0.2)",
+                  background: "rgba(0, 230, 118, 0.05)",
+                }}
+              >
+                <Check size={11} /> RESOLVE
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const AdminPanel = ({
   posts,
   users,
+  reports,
   onBack,
   onDeletePost,
   onBanUser,
   onUnbanUser,
+  onResolveReport,
 }) => {
   const [tab, setTab] = useState("overview");
   const stats = {
@@ -4222,6 +4769,7 @@ const AdminPanel = ({
             ["overview", "Overview"],
             ["posts", "Posts"],
             ["users", "Users"],
+            ["reports", `Reports${reports.length ? ` (${reports.length})` : ""}`],
           ].map(([k, l]) => (
             <button
               key={k}
@@ -4252,6 +4800,9 @@ const AdminPanel = ({
         {tab === "users" && (
           <AdminUsers users={users} onBan={onBanUser} onUnban={onUnbanUser} />
         )}
+        {tab === "reports" && (
+          <AdminReports reports={reports} onResolve={onResolveReport} onDeletePost={onDeletePost} />
+        )}
       </div>
     </div>
   );
@@ -4273,6 +4824,14 @@ export default function EchoHive() {
   const [repostTarget, setRepostTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [feedOffset, setFeedOffset] = useState(0);
+  const [hasMorePosts, setHasMorePosts] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [reportTarget, setReportTarget] = useState(null);
+  const [reports, setReports] = useState([]);
+  const [reportsLoaded, setReportsLoaded] = useState(false);
+  const [notifications, setNotifications] = useState([]);
 
   const [showToast, toastNode] = useToast();
 
@@ -4289,8 +4848,12 @@ export default function EchoHive() {
       .catch(console.error);
 
     setFeedLoading(true);
-    fetchFeed()
-      .then(setPosts)
+    fetchFeed({ limit: FEED_PAGE_SIZE, offset: 0 })
+      .then((page) => {
+        setPosts(page);
+        setFeedOffset(page.length);
+        setHasMorePosts(page.length === FEED_PAGE_SIZE);
+      })
       .catch(console.error)
       .finally(() => setFeedLoading(false));
 
@@ -4381,6 +4944,50 @@ export default function EchoHive() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedPost?.id]);
 
+  // Notifications — fetch once per session and stream new ones in live.
+  useEffect(() => {
+    if (!user) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setNotifications([]);
+      return;
+    }
+    fetchNotifications().then(setNotifications).catch(console.error);
+    const unsubscribe = subscribeToNotifications(user.id, () => {
+      fetchNotifications().then(setNotifications).catch(console.error);
+    });
+    return unsubscribe;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
+  const unreadNotifCount = notifications.filter((n) => !n.isRead).length;
+
+  const handleOpenNotifications = async () => {
+    const unreadIds = notifications.filter((n) => !n.isRead).map((n) => n.id);
+    if (!unreadIds.length) return;
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+    try {
+      await markNotificationsRead(unreadIds);
+    } catch (e) {
+      showToast(e.message);
+    }
+  };
+
+  const handleNotificationClick = async (n) => {
+    if (!n.postId) return;
+    const existing = posts.find((p) => p.id === n.postId);
+    if (existing) {
+      handleOpenPost(existing);
+      return;
+    }
+    try {
+      const full = await fetchPostById(n.postId);
+      setPosts((prev) => (prev.some((p) => p.id === full.id) ? prev : [full, ...prev]));
+      handleOpenPost(full);
+    } catch {
+      showToast("That post is no longer available");
+    }
+  };
+
   const refreshFeed = async (cat, { silent = false } = {}) => {
     const slug =
       cat !== undefined
@@ -4390,11 +4997,33 @@ export default function EchoHive() {
           : activeCategory;
     if (!silent) setFeedLoading(true);
     try {
-      setPosts(await fetchFeed({ categorySlug: slug || null }));
+      const page = await fetchFeed({ categorySlug: slug || null, limit: FEED_PAGE_SIZE, offset: 0 });
+      setPosts(page);
+      setFeedOffset(page.length);
+      setHasMorePosts(page.length === FEED_PAGE_SIZE);
     } catch (e) {
       showToast(e.message);
     } finally {
       if (!silent) setFeedLoading(false);
+    }
+  };
+
+  const loadMorePosts = async () => {
+    if (loadingMore || !hasMorePosts) return;
+    setLoadingMore(true);
+    try {
+      const slug = activeCategory === "all" ? null : activeCategory;
+      const page = await fetchFeed({ categorySlug: slug, limit: FEED_PAGE_SIZE, offset: feedOffset });
+      setPosts((prev) => {
+        const existingIds = new Set(prev.map((p) => p.id));
+        return [...prev, ...page.filter((p) => !existingIds.has(p.id))];
+      });
+      setFeedOffset((prev) => prev + page.length);
+      setHasMorePosts(page.length === FEED_PAGE_SIZE);
+    } catch (e) {
+      showToast(e.message);
+    } finally {
+      setLoadingMore(false);
     }
   };
 
@@ -4506,6 +5135,36 @@ export default function EchoHive() {
     }
   };
 
+  const handleSubmitReport = async (reason, details) => {
+    try {
+      await reportContent({ postId: reportTarget, reason, details });
+      setReportTarget(null);
+      showToast("Report submitted — a moderator will review it");
+    } catch (e) {
+      showToast(e.message);
+    }
+  };
+
+  const loadReports = async (status = "open") => {
+    try {
+      setReports(await adminFetchReports({ status }));
+    } catch (e) {
+      showToast(e.message);
+    } finally {
+      setReportsLoaded(true);
+    }
+  };
+
+  const handleResolveReport = async (reportId, status) => {
+    try {
+      await adminResolveReport(reportId, status);
+      setReports((prev) => prev.filter((r) => r.id !== reportId));
+      showToast(status === "resolved" ? "Report resolved" : "Report dismissed");
+    } catch (e) {
+      showToast(e.message);
+    }
+  };
+
   const handleRepost = async (postId) => {
     const post = posts.find((p) => p.id === postId);
     if (!post) return;
@@ -4586,16 +5245,19 @@ export default function EchoHive() {
 
   if (view === "admin" && user.role === "admin") {
     if (users.length === 0) adminFetchUsers().then(setUsers);
+    if (!reportsLoaded) loadReports();
     return (
       <>
         {toastNode}
         <AdminPanel
           posts={posts}
           users={users}
+          reports={reports}
           onBack={() => setView("feed")}
           onDeletePost={handleDelete}
           onBanUser={handleBan}
           onUnbanUser={handleUnban}
+          onResolveReport={handleResolveReport}
         />
       </>
     );
@@ -4621,6 +5283,12 @@ export default function EchoHive() {
         onCreate={() => setCreatingPost(true)}
         onNavigate={setView}
         onOpenSettings={() => setSettingsOpen(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
+        notifications={notifications}
+        unreadCount={unreadNotifCount}
+        onOpenNotifications={handleOpenNotifications}
+        onNotificationClick={handleNotificationClick}
       />
 
       <div style={{ maxWidth: 1200, margin: "0 auto", padding: "28px 24px" }}>
@@ -4644,6 +5312,7 @@ export default function EchoHive() {
               onBookmark={handleBookmark}
               onShare={handleShare}
               onRepost={handleRepost}
+              onReport={setReportTarget}
               isAdmin={user.role === "admin"}
               currentUserId={user.id}
               title="Saved"
@@ -4662,10 +5331,15 @@ export default function EchoHive() {
               onBookmark={handleBookmark}
               onShare={handleShare}
               onRepost={handleRepost}
+              onReport={setReportTarget}
               isAdmin={user.role === "admin"}
               currentUserId={user.id}
               onCreate={() => setCreatingPost(true)}
               loading={feedLoading}
+              searchQuery={searchQuery}
+              hasMore={hasMorePosts}
+              loadingMore={loadingMore}
+              onLoadMore={loadMorePosts}
             />
           )}
 
@@ -4684,6 +5358,14 @@ export default function EchoHive() {
           onBookmark={handleBookmark}
           onShare={handleShare}
           onRepost={handleRepost}
+          onReport={setReportTarget}
+        />
+      )}
+
+      {reportTarget && (
+        <ReportModal
+          onClose={() => setReportTarget(null)}
+          onSubmit={handleSubmitReport}
         />
       )}
 

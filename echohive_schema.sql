@@ -22,6 +22,8 @@
 -- ---------------------------------------------------------------------------
 drop view  if exists public.feed_posts          cascade;
 drop view  if exists public.post_reactions_view cascade;
+drop table if exists public.notifications       cascade;
+drop table if exists public.reports             cascade;
 drop table if exists public.bookmarks           cascade;
 drop table if exists public.reposts             cascade;
 drop table if exists public.post_views          cascade;
@@ -32,9 +34,10 @@ drop table if exists public.posts               cascade;
 drop table if exists public.categories          cascade;
 drop table if exists public.profiles            cascade;
 
-drop type  if exists public.user_role     cascade;
-drop type  if exists public.reaction_type cascade;
-drop type  if exists public.media_type    cascade;
+drop type  if exists public.user_role         cascade;
+drop type  if exists public.reaction_type     cascade;
+drop type  if exists public.media_type        cascade;
+drop type  if exists public.notification_type cascade;
 
 -- ---------------------------------------------------------------------------
 -- 1. ENUM TYPES
@@ -46,6 +49,9 @@ create type public.reaction_type as enum ('like', 'love', 'laugh', 'wow', 'sad',
 
 -- Attachments on posts/comments — images or short video clips.
 create type public.media_type as enum ('image', 'video');
+
+-- What triggered a notification for the recipient.
+create type public.notification_type as enum ('like', 'comment', 'reply', 'repost');
 
 -- ---------------------------------------------------------------------------
 -- 2. PROFILES
@@ -191,6 +197,39 @@ create table public.reposts (
 
 create index reposts_user_idx on public.reposts (user_id, created_at desc);
 
+-- ---------------------------------------------------------------------------
+-- 9b. REPORTS  (flagging posts/comments for moderator review)
+-- ---------------------------------------------------------------------------
+create table public.reports (
+    report_id   bigserial   primary key,
+    post_id     bigint      references public.posts(post_id) on delete cascade,
+    comment_id  bigint      references public.comments(comment_id) on delete cascade,
+    reporter_id uuid        not null references public.profiles(user_id) on delete cascade,
+    reason      text        not null check (char_length(reason) between 1 and 60),
+    details     text        check (details is null or char_length(details) <= 500),
+    status      text        not null default 'open' check (status in ('open', 'resolved', 'dismissed')),
+    created_at  timestamptz not null default now(),
+    check ((post_id is not null) or (comment_id is not null))
+);
+
+create index reports_status_idx on public.reports (status, created_at desc);
+
+-- ---------------------------------------------------------------------------
+-- 9c. NOTIFICATIONS  (populated by triggers in section 10, never by clients)
+-- ---------------------------------------------------------------------------
+create table public.notifications (
+    notification_id bigserial                 primary key,
+    user_id          uuid                      not null references public.profiles(user_id) on delete cascade,
+    actor_id         uuid                      not null references public.profiles(user_id) on delete cascade,
+    type             public.notification_type  not null,
+    post_id          bigint                    references public.posts(post_id) on delete cascade,
+    comment_id       bigint                    references public.comments(comment_id) on delete cascade,
+    is_read          boolean                   not null default false,
+    created_at       timestamptz               not null default now()
+);
+
+create index notifications_user_idx on public.notifications (user_id, created_at desc);
+
 -- ============================================================================
 -- 10. TRIGGERS
 -- ============================================================================
@@ -263,6 +302,61 @@ end$$;
 create trigger post_views_count_trg after insert on public.post_views
     for each row execute function public.on_view_insert();
 
+-- Notifications — fire alongside the counters above, never for your own
+-- actions on your own content.
+create or replace function public.notify_on_reaction()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_owner uuid;
+begin
+    select user_id into v_owner from public.posts where post_id = new.post_id;
+    if v_owner is not null and v_owner <> new.user_id then
+        insert into public.notifications (user_id, actor_id, type, post_id)
+        values (v_owner, new.user_id, 'like', new.post_id);
+    end if;
+    return new;
+end$$;
+
+create trigger notify_reaction_trg after insert on public.reactions
+    for each row execute function public.notify_on_reaction();
+
+create or replace function public.notify_on_comment()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_target uuid;
+begin
+    if new.parent_comment_id is null then
+        select user_id into v_target from public.posts where post_id = new.post_id;
+        if v_target is not null and v_target <> new.user_id then
+            insert into public.notifications (user_id, actor_id, type, post_id, comment_id)
+            values (v_target, new.user_id, 'comment', new.post_id, new.comment_id);
+        end if;
+    else
+        select user_id into v_target from public.comments where comment_id = new.parent_comment_id;
+        if v_target is not null and v_target <> new.user_id then
+            insert into public.notifications (user_id, actor_id, type, post_id, comment_id)
+            values (v_target, new.user_id, 'reply', new.post_id, new.comment_id);
+        end if;
+    end if;
+    return new;
+end$$;
+
+create trigger notify_comment_trg after insert on public.comments
+    for each row execute function public.notify_on_comment();
+
+create or replace function public.notify_on_repost()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare v_owner uuid;
+begin
+    select user_id into v_owner from public.posts where post_id = new.post_id;
+    if v_owner is not null and v_owner <> new.user_id then
+        insert into public.notifications (user_id, actor_id, type, post_id)
+        values (v_owner, new.user_id, 'repost', new.post_id);
+    end if;
+    return new;
+end$$;
+
+create trigger notify_repost_trg after insert on public.reposts
+    for each row execute function public.notify_on_repost();
+
 -- ============================================================================
 -- 11. AUTO-PROVISION PROFILE ON SIGN-UP
 -- ============================================================================
@@ -312,6 +406,8 @@ alter table public.reactions   enable row level security;
 alter table public.post_views  enable row level security;
 alter table public.bookmarks   enable row level security;
 alter table public.reposts     enable row level security;
+alter table public.reports     enable row level security;
+alter table public.notifications enable row level security;
 
 create or replace function public.is_admin()
 returns boolean language sql security definer set search_path = public as $$
@@ -438,6 +534,26 @@ create policy "reposts: self update"
     using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "reposts: self delete"
     on public.reposts for delete to authenticated using (user_id = auth.uid());
+
+-- REPORTS
+create policy "reports: reporter insert"
+    on public.reports for insert to authenticated
+    with check (reporter_id = auth.uid() and not public.is_banned());
+create policy "reports: reporter read own"
+    on public.reports for select to authenticated
+    using (reporter_id = auth.uid());
+create policy "reports: admin manage"
+    on public.reports for all to authenticated
+    using (public.is_admin()) with check (public.is_admin());
+
+-- NOTIFICATIONS (rows are only ever inserted by the security-definer
+-- trigger functions in section 10 — no insert policy for regular clients)
+create policy "notifications: recipient read"
+    on public.notifications for select to authenticated
+    using (user_id = auth.uid());
+create policy "notifications: recipient update"
+    on public.notifications for update to authenticated
+    using (user_id = auth.uid()) with check (user_id = auth.uid());
 
 -- ============================================================================
 -- 12b. STORAGE — "media" bucket for post/comment image & video uploads
@@ -585,6 +701,10 @@ exception when duplicate_object then null; end $$;
 
 do $$ begin
     alter publication supabase_realtime add table public.comments;
+exception when duplicate_object then null; end $$;
+
+do $$ begin
+    alter publication supabase_realtime add table public.notifications;
 exception when duplicate_object then null; end $$;
 
 -- ============================================================================
