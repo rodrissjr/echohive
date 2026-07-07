@@ -3337,8 +3337,132 @@ const toUserShape = (res) => ({
   avatarUrl: res.profile.avatar_url || null,
 });
 
+const GoogleIcon = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24">
+    <path fill="#4285F4" d="M23.52 12.27c0-.79-.07-1.54-.2-2.27H12v4.51h6.47c-.28 1.48-1.13 2.73-2.4 3.58v2.98h3.89c2.27-2.09 3.56-5.17 3.56-8.8z" />
+    <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.89-2.98c-1.08.72-2.45 1.15-4.04 1.15-3.11 0-5.74-2.09-6.68-4.9H1.32v3.07C3.29 21.3 7.31 24 12 24z" />
+    <path fill="#FBBC05" d="M5.32 14.36c-.24-.72-.38-1.48-.38-2.27s.14-1.55.38-2.27V6.75H1.32C.48 8.41 0 10.15 0 12s.48 3.59 1.32 5.25l4-3.09z" />
+    <path fill="#EA4335" d="M12 4.77c1.76 0 3.34.6 4.59 1.79l3.44-3.44C17.95 1.19 15.24 0 12 0 7.31 0 3.29 2.7 1.32 6.75l4 3.09c.94-2.81 3.57-4.9 6.68-4.9z" />
+  </svg>
+);
+
+const MetaIcon = ({ size = 18 }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <defs>
+      <linearGradient id="meta-icon-grad" x1="2" y1="8" x2="22" y2="19" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#0064E1" />
+        <stop offset="0.5" stopColor="#0082FB" />
+        <stop offset="1" stopColor="#00C6FF" />
+      </linearGradient>
+    </defs>
+    <path
+      d="M6.5 8C4 8 2 10.5 2 13.5S4 19 6.5 19c2 0 3.2-1.5 4.5-4 1.3 2.5 2.5 4 4.5 4 2.5 0 4.5-2.5 4.5-5.5S17.5 8 15 8c-2 0-3.2 1.5-4.5 4C9.2 9.5 8 8 6.5 8z"
+      stroke="url(#meta-icon-grad)"
+      strokeWidth="2.2"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+const SocialAuthRow = ({ onSelect }) => (
+  <div>
+    <div className="flex items-center gap-3" style={{ margin: "18px 0 14px" }}>
+      <div style={{ flex: 1, height: 1, background: "var(--line-2)" }} />
+      <span
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em", textTransform: "uppercase" }}
+      >
+        or continue with
+      </span>
+      <div style={{ flex: 1, height: 1, background: "var(--line-2)" }} />
+    </div>
+    <div className="grid grid-cols-2 gap-2">
+      <button
+        type="button"
+        onClick={() => onSelect("Google")}
+        className="eh-btn eh-btn-ghost flex items-center justify-center gap-2 text-sm"
+        style={{ padding: "9px" }}
+      >
+        <GoogleIcon size={16} /> Google
+      </button>
+      <button
+        type="button"
+        onClick={() => onSelect("Meta")}
+        className="eh-btn eh-btn-ghost flex items-center justify-center gap-2 text-sm"
+        style={{ padding: "9px" }}
+      >
+        <MetaIcon size={16} /> Meta
+      </button>
+    </div>
+  </div>
+);
+
+const ComingSoonModal = ({ provider, onClose }) => (
+  <div
+    className="fixed inset-0 z-50 flex items-center justify-center eh-fade-in"
+    style={{
+      background: "rgba(3, 4, 8, 0.75)",
+      backdropFilter: "blur(12px)",
+      WebkitBackdropFilter: "blur(12px)",
+      padding: 20,
+    }}
+    onClick={onClose}
+  >
+    <div
+      className="eh-card eh-pop text-center"
+      style={{
+        maxWidth: 340,
+        width: "100%",
+        padding: "32px 28px",
+        background: "rgba(12, 18, 35, 0.55)",
+        backdropFilter: "blur(28px) saturate(180%)",
+        WebkitBackdropFilter: "blur(28px) saturate(180%)",
+        border: "1px solid rgba(0, 240, 255, 0.15)",
+        boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45), 0 0 40px rgba(0, 240, 255, 0.06)",
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex justify-center mb-4">
+        <div
+          className="flex items-center justify-center"
+          style={{
+            width: 56,
+            height: 56,
+            borderRadius: 999,
+            background: "rgba(0, 240, 255, 0.08)",
+            border: "1px solid rgba(0, 240, 255, 0.2)",
+          }}
+        >
+          {provider === "Google" ? <GoogleIcon size={26} /> : <MetaIcon size={26} />}
+        </div>
+      </div>
+      <div
+        className="font-display"
+        style={{ fontSize: 18, fontWeight: 700, color: "var(--ink)" }}
+      >
+        Coming soon
+      </div>
+      <p
+        className="font-body mt-2"
+        style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6 }}
+      >
+        Signing in with {provider} isn't available yet — we're working on
+        it. For now, use your email and password.
+      </p>
+      <button
+        onClick={onClose}
+        className="eh-btn eh-btn-primary w-full mt-5"
+        style={{ padding: "10px", fontSize: 14, fontWeight: 600 }}
+      >
+        Got it
+      </button>
+    </div>
+  </div>
+);
+
 const AuthView = ({ onLogin, toast, initialMode }) => {
   const [mode, setMode] = useState(initialMode || "login"); // 'login' | 'register' | 'forgot' | 'reset'
+  const [comingSoon, setComingSoon] = useState(null);
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
@@ -3703,6 +3827,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                   "Sign in"
                 )}
               </button>
+              <SocialAuthRow onSelect={setComingSoon} />
               <div
                 className="font-body text-center"
                 style={{ fontSize: 13, color: "var(--ink-2)" }}
@@ -3855,6 +3980,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                   "Create account"
                 )}
               </button>
+              <SocialAuthRow onSelect={setComingSoon} />
               <div
                 className="font-body text-center"
                 style={{ fontSize: 13, color: "var(--ink-2)" }}
@@ -4070,6 +4196,9 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           </div>
         </div>
       </div>
+      {comingSoon && (
+        <ComingSoonModal provider={comingSoon} onClose={() => setComingSoon(null)} />
+      )}
     </div>
   );
 };
