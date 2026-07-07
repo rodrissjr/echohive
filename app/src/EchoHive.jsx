@@ -714,6 +714,10 @@ const GlobalStyles = () => (
       transform: translateY(-1px);
       box-shadow: 0 0 30px rgba(0, 240, 255, 0.3), 0 4px 16px rgba(0, 240, 255, 0.15);
     }
+    .eh-btn-primary:active {
+      transform: translateY(0) scale(.97);
+      box-shadow: 0 0 16px rgba(0, 240, 255, 0.2);
+    }
     .eh-btn-accent {
       background: linear-gradient(135deg, var(--accent) 0%, #00B8FF 100%);
       color: #06080F;
@@ -722,6 +726,9 @@ const GlobalStyles = () => (
     .eh-btn-accent:hover {
       box-shadow: 0 0 25px rgba(0, 240, 255, 0.25);
       transform: translateY(-1px);
+    }
+    .eh-btn-accent:active {
+      transform: translateY(0) scale(.97);
     }
     .eh-btn-ghost {
       background: rgba(0, 240, 255, 0.04);
@@ -732,6 +739,9 @@ const GlobalStyles = () => (
       background: rgba(0, 240, 255, 0.08);
       border-color: rgba(0, 240, 255, 0.2);
       color: var(--ink);
+    }
+    .eh-btn-ghost:active {
+      transform: scale(.97);
     }
 
     .eh-input {
@@ -753,6 +763,20 @@ const GlobalStyles = () => (
 
     @keyframes eh-fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
     .eh-fade-up { animation: eh-fade-up .45s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    @keyframes eh-mode-switch { from { opacity: 0; transform: translateY(8px) scale(.98); filter: blur(2px); } to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); } }
+    .eh-mode-switch { animation: eh-mode-switch .4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+    @keyframes eh-orb-float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      50% { transform: translate(24px, -32px) scale(1.08); }
+    }
+    .eh-auth-orb {
+      position: absolute;
+      border-radius: 999px;
+      filter: blur(70px);
+      pointer-events: none;
+      animation: eh-orb-float 14s ease-in-out infinite;
+      z-index: 0;
+    }
     @keyframes eh-fade-in { from { opacity: 0; } to { opacity: 1; } }
     .eh-fade-in { animation: eh-fade-in .25s ease both; }
     @keyframes eh-pop { 0% { transform: scale(.5); opacity: 0; } 60% { transform: scale(1.08); opacity: 1; } 100% { transform: scale(1); } }
@@ -1156,12 +1180,14 @@ const Header = ({
                 onClick={() => setNotifOpen(false)}
               />
               <div
-                className="absolute right-0 mt-2 eh-card eh-fade-in"
+                className="fixed eh-card eh-fade-in"
                 style={{
-                  width: 320,
-                  maxHeight: 420,
+                  top: 66,
+                  right: 16,
+                  width: "min(320px, calc(100vw - 32px))",
+                  maxHeight: "min(420px, calc(100vh - 82px))",
                   overflowY: "auto",
-                  zIndex: 20,
+                  zIndex: 50,
                   padding: 6,
                   background: "rgba(12, 18, 35, 0.95)",
                   boxShadow: "0 8px 40px rgba(0,0,0,0.5), 0 0 20px rgba(0, 240, 255, 0.04)",
@@ -3413,12 +3439,33 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
   return (
     <div
       className="eh-root min-h-screen hex-texture flex items-center justify-center"
-      style={{ padding: 20 }}
+      style={{ padding: 20, position: "relative", overflow: "hidden" }}
     >
       <GlobalStyles />
       <div
+        className="eh-auth-orb"
+        style={{
+          width: 420,
+          height: 420,
+          top: "-10%",
+          left: "-8%",
+          background: "radial-gradient(circle, rgba(0,240,255,0.16) 0%, transparent 70%)",
+        }}
+      />
+      <div
+        className="eh-auth-orb"
+        style={{
+          width: 380,
+          height: 380,
+          bottom: "-12%",
+          right: "-6%",
+          background: "radial-gradient(circle, rgba(179,102,255,0.14) 0%, transparent 70%)",
+          animationDelay: "-7s",
+        }}
+      />
+      <div
         className="w-full grid md:grid-cols-2 gap-10 items-center"
-        style={{ maxWidth: 980 }}
+        style={{ maxWidth: 980, position: "relative", zIndex: 1 }}
       >
         <div className="hidden md:block eh-fade-up">
           <Logo size={40} />
@@ -3457,8 +3504,8 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                 "Pick your university when you sign up. EchoHive is not tied to one institution.",
               ],
               [
-                "Real reactions, not just likes",
-                "Six ways to respond — because not everything you read is a thumbs up.",
+                "Live, always",
+                "Likes, replies, and new posts appear the moment they happen — no refresh needed.",
               ],
               [
                 "Saved, shared, reposted",
@@ -3522,15 +3569,20 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           className="eh-card eh-fade-up"
           style={{
             padding: "40px 40px 36px",
+            borderRadius: 20,
             animationDelay: "120ms",
+            background: "rgba(12, 18, 35, 0.55)",
+            backdropFilter: "blur(28px) saturate(180%)",
+            WebkitBackdropFilter: "blur(28px) saturate(180%)",
             border: "1px solid rgba(0, 240, 255, 0.15)",
-            boxShadow: "0 20px 50px rgba(0, 0, 0, 0.4), 0 0 30px rgba(0, 240, 255, 0.05)",
+            boxShadow: "0 24px 60px rgba(0, 0, 0, 0.45), 0 0 40px rgba(0, 240, 255, 0.06), inset 0 1px 0 rgba(255,255,255,0.05)",
           }}
         >
           <div className="md:hidden mb-6">
             <Logo />
           </div>
 
+          <div key={mode} className="eh-mode-switch">
           <div
             className="font-display"
             style={{
@@ -4015,6 +4067,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
               </button>
             </form>
           )}
+          </div>
         </div>
       </div>
     </div>
