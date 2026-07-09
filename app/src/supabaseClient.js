@@ -118,6 +118,51 @@ export function onAuthChange(callback) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. TWO-FACTOR AUTHENTICATION (TOTP, via Supabase Auth's built-in MFA —
+//     no schema changes needed, factors live in Supabase's own auth tables)
+// ---------------------------------------------------------------------------
+export async function mfaListFactors() {
+    const { data, error } = await supabase.auth.mfa.listFactors();
+    if (error) throw error;
+    return data.totp || [];
+}
+
+export async function mfaEnroll() {
+    // A previously abandoned enrollment leaves an "unverified" factor behind,
+    // which blocks re-enrolling with a cryptic "already exists" error since
+    // factor friendly names must be unique per user. Clear those out first.
+    const { data: existing } = await supabase.auth.mfa.listFactors();
+    const stale = (existing?.all || []).filter(
+        (f) => f.factor_type === 'totp' && f.status === 'unverified',
+    );
+    await Promise.all(stale.map((f) => supabase.auth.mfa.unenroll({ factorId: f.id })));
+
+    const { data, error } = await supabase.auth.mfa.enroll({ factorType: 'totp' });
+    if (error) throw error;
+    return { factorId: data.id, qrCode: data.totp.qr_code, secret: data.totp.secret };
+}
+
+export async function mfaVerifyCode(factorId, code) {
+    const { data, error } = await supabase.auth.mfa.challengeAndVerify({ factorId, code });
+    if (error) throw error;
+    return data;
+}
+
+export async function mfaUnenroll(factorId) {
+    const { error } = await supabase.auth.mfa.unenroll({ factorId });
+    if (error) throw error;
+}
+
+// After signInWithPassword, a user with an enrolled factor is only at aal1
+// (password-verified) — nextLevel comes back 'aal2' until they also pass a
+// TOTP challenge. This tells the login flow whether to prompt for a code.
+export async function mfaGetAssurance() {
+    const { data, error } = await supabase.auth.mfa.getAuthenticatorAssuranceLevel();
+    if (error) throw error;
+    return data;
+}
+
+// ---------------------------------------------------------------------------
 // 4. CATEGORIES
 // ---------------------------------------------------------------------------
 export async function fetchCategories() {

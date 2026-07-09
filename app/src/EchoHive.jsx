@@ -50,6 +50,11 @@ import {
   resendConfirmationEmail,
   sendPasswordResetEmail,
   updatePassword,
+  mfaListFactors,
+  mfaEnroll,
+  mfaVerifyCode,
+  mfaUnenroll,
+  mfaGetAssurance,
   fetchFeed,
   createPost,
   deletePost,
@@ -3067,6 +3072,68 @@ const ProfileSettingsModal = ({ user, onClose, onSaved }) => {
     }
   };
 
+  // ----- Two-factor authentication -----
+  const [factors, setFactors] = useState([]);
+  const [factorsLoaded, setFactorsLoaded] = useState(false);
+  const [enrollment, setEnrollment] = useState(null);
+  const [mfaCode, setMfaCode] = useState("");
+  const [mfaBusy, setMfaBusy] = useState(false);
+  const [mfaError, setMfaError] = useState("");
+
+  useEffect(() => {
+    mfaListFactors()
+      .then(setFactors)
+      .catch((e) => setMfaError(e.message))
+      .finally(() => setFactorsLoaded(true));
+  }, []);
+
+  const startEnroll = async () => {
+    setMfaError("");
+    setMfaBusy(true);
+    try {
+      setEnrollment(await mfaEnroll());
+    } catch (e) {
+      setMfaError(e.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
+  const cancelEnroll = () => {
+    setEnrollment(null);
+    setMfaCode("");
+    setMfaError("");
+  };
+
+  const confirmEnroll = async () => {
+    if (mfaCode.length !== 6 || mfaBusy) return;
+    setMfaBusy(true);
+    setMfaError("");
+    try {
+      await mfaVerifyCode(enrollment.factorId, mfaCode);
+      setEnrollment(null);
+      setMfaCode("");
+      setFactors(await mfaListFactors());
+    } catch (e) {
+      setMfaError(e.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
+  const disable2fa = async (factorId) => {
+    setMfaBusy(true);
+    setMfaError("");
+    try {
+      await mfaUnenroll(factorId);
+      setFactors(await mfaListFactors());
+    } catch (e) {
+      setMfaError(e.message);
+    } finally {
+      setMfaBusy(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-start justify-center eh-fade-in"
@@ -3190,6 +3257,123 @@ const ProfileSettingsModal = ({ user, onClose, onSaved }) => {
                 "Save photo"
               )}
             </button>
+          </div>
+
+          <div
+            className="w-full mt-6 pt-6"
+            style={{ borderTop: "1px solid var(--line-2)" }}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div
+                  className="font-display"
+                  style={{ fontSize: 14, fontWeight: 600, color: "var(--ink)" }}
+                >
+                  Two-factor authentication
+                </div>
+                <div
+                  className="font-body"
+                  style={{ fontSize: 12, color: "var(--muted)", marginTop: 2 }}
+                >
+                  {factors.length
+                    ? "Enabled with an authenticator app"
+                    : "Add an extra layer of security to your account"}
+                </div>
+              </div>
+              {factorsLoaded && !enrollment && (
+                factors.length ? (
+                  <button
+                    onClick={() => disable2fa(factors[0].id)}
+                    disabled={mfaBusy}
+                    className="eh-btn eh-btn-ghost text-sm shrink-0"
+                    style={{ padding: "7px 14px", color: "var(--danger)" }}
+                  >
+                    {mfaBusy ? <Spinner size={13} /> : "Disable"}
+                  </button>
+                ) : (
+                  <button
+                    onClick={startEnroll}
+                    disabled={mfaBusy}
+                    className="eh-btn eh-btn-primary text-sm shrink-0"
+                    style={{ padding: "7px 14px" }}
+                  >
+                    {mfaBusy ? <Spinner size={13} color="#06080F" /> : "Enable"}
+                  </button>
+                )
+              )}
+            </div>
+
+            {enrollment && (
+              <div
+                className="mt-4"
+                style={{
+                  padding: 16,
+                  borderRadius: 10,
+                  background: "rgba(6, 8, 15, 0.4)",
+                  border: "1px solid var(--glass-border)",
+                }}
+              >
+                <div
+                  className="font-body"
+                  style={{ fontSize: 12.5, color: "var(--ink-2)", marginBottom: 12 }}
+                >
+                  Scan this with Google Authenticator, Authy, or any TOTP app.
+                </div>
+                <div className="flex justify-center mb-3">
+                  <img
+                    src={enrollment.qrCode}
+                    alt="Two-factor authentication QR code"
+                    style={{ width: 160, height: 160, background: "#fff", padding: 8, borderRadius: 8 }}
+                  />
+                </div>
+                <div
+                  className="font-mono text-center mb-3"
+                  style={{ fontSize: 11, color: "var(--muted)", wordBreak: "break-all" }}
+                >
+                  {enrollment.secret}
+                </div>
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  placeholder="123456"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  className="eh-input w-full font-mono text-center"
+                  style={{ padding: "10px", fontSize: 18, letterSpacing: "0.3em", marginBottom: 10 }}
+                  maxLength={6}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={cancelEnroll}
+                    disabled={mfaBusy}
+                    className="eh-btn eh-btn-ghost text-sm flex-1"
+                    style={{ padding: "8px" }}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={confirmEnroll}
+                    disabled={mfaCode.length !== 6 || mfaBusy}
+                    className="eh-btn eh-btn-primary text-sm flex-1 flex items-center justify-center gap-2"
+                    style={{
+                      padding: "8px",
+                      opacity: mfaCode.length !== 6 || mfaBusy ? 0.5 : 1,
+                    }}
+                  >
+                    {mfaBusy ? <Spinner size={13} color="#06080F" /> : "Confirm"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mfaError && (
+              <div
+                className="font-body mt-2"
+                style={{ fontSize: 12, color: "var(--danger)" }}
+              >
+                {mfaError}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -3468,6 +3652,8 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
     display: "",
     university: "Institute of Accountancy Arusha",
   });
+  const [mfaFactorId, setMfaFactorId] = useState(null);
+  const [mfaCode, setMfaCode] = useState("");
 
   // Two-phase mode transition: the current form fades/blurs out, the card
   // height glides to the next form's size, then the new form slides in.
@@ -3504,17 +3690,45 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, phase]);
 
+  const completeLogin = async () => {
+    const res = await getCurrentUser();
+    if (res) onLogin(toUserShape(res));
+    else toast("Signed in but profile not found — contact support.");
+  };
+
   const handleLogin = async (e) => {
     e.preventDefault();
     if (loading) return;
     setLoading(true);
     try {
       await signIn({ email: form.email, password: form.password });
-      const res = await getCurrentUser();
-      if (res) onLogin(toUserShape(res));
-      else toast("Signed in but profile not found — contact support.");
+      const assurance = await mfaGetAssurance();
+      if (assurance.nextLevel === "aal2" && assurance.nextLevel !== assurance.currentLevel) {
+        const factors = await mfaListFactors();
+        if (factors.length) {
+          setMfaFactorId(factors[0].id);
+          switchMode("mfa");
+          return;
+        }
+      }
+      await completeLogin();
     } catch (err) {
       toast(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleMfaVerify = async (e) => {
+    e.preventDefault();
+    if (loading || mfaCode.length !== 6) return;
+    setLoading(true);
+    try {
+      await mfaVerifyCode(mfaFactorId, mfaCode);
+      await completeLogin();
+    } catch (err) {
+      toast(err.message);
+      setMfaCode("");
     } finally {
       setLoading(false);
     }
@@ -3738,6 +3952,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           >
             {mode === "login" && "Welcome back"}
             {mode === "register" && "Create account"}
+            {mode === "mfa" && "Security check"}
             {mode === "check-email" && "One more step"}
             {mode === "forgot" && "Forgot password"}
             {mode === "reset" && "Set a new password"}
@@ -3758,6 +3973,7 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
           >
             {mode === "login" && "Sign in to EchoHive"}
             {mode === "register" && "Join the conversation"}
+            {mode === "mfa" && "Enter your code"}
             {mode === "check-email" && "Confirm your email"}
             {mode === "forgot" && "We'll send a reset link"}
             {mode === "reset" && "Almost done"}
@@ -3881,6 +4097,70 @@ const AuthView = ({ onLogin, toast, initialMode }) => {
                   EchoHive connects ideas, people, and innovation in one smart
                   digital workspace.
                 </div>
+              </div>
+            </form>
+          )}
+
+          {mode === "mfa" && (
+            <form onSubmit={handleMfaVerify} className="space-y-4">
+              <p
+                className="font-body"
+                style={{ fontSize: 13.5, color: "var(--ink-2)", lineHeight: 1.6 }}
+              >
+                Enter the 6-digit code from your authenticator app.
+              </p>
+              <div>
+                <Label>Verification code</Label>
+                <input
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  className="eh-input w-full font-mono text-center"
+                  placeholder="123456"
+                  style={{ padding: "12px 14px", fontSize: 22, letterSpacing: "0.35em" }}
+                  maxLength={6}
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading || mfaCode.length !== 6}
+                className="eh-btn eh-btn-primary w-full"
+                style={{
+                  padding: "11px",
+                  fontSize: 14,
+                  fontWeight: 600,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 8,
+                  opacity: loading || mfaCode.length !== 6 ? 0.6 : 1,
+                }}
+              >
+                {loading ? (
+                  <>
+                    <Spinner size={16} color="#06080F" /> Verifying…
+                  </>
+                ) : (
+                  "Verify"
+                )}
+              </button>
+              <div
+                className="font-body text-center"
+                style={{ fontSize: 13, color: "var(--ink-2)" }}
+              >
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMfaCode("");
+                    switchMode("login");
+                  }}
+                  className="font-mono"
+                  style={{ color: "var(--accent)", fontWeight: 600, fontSize: 12, letterSpacing: "0.02em" }}
+                >
+                  BACK TO SIGN IN
+                </button>
               </div>
             </form>
           )}
@@ -5048,7 +5328,13 @@ export default function EchoHive() {
 
   // Auth + initial feed load
   useEffect(() => {
-    getCurrentUser()
+    mfaGetAssurance()
+      .then((assurance) => {
+        if (assurance.nextLevel === "aal2" && assurance.nextLevel !== assurance.currentLevel) {
+          return null;
+        }
+        return getCurrentUser();
+      })
       .then((res) => {
         if (res) setUser(toUserShape(res));
       })
@@ -5070,6 +5356,14 @@ export default function EchoHive() {
         return;
       }
       try {
+        // Supabase opens a session (at aal1) the instant the password
+        // checks out, before any TOTP code has been verified. Don't treat
+        // that as "logged in" yet — AuthView's own mfa step prompts for the
+        // code and this listener fires again once it's verified.
+        const assurance = await mfaGetAssurance();
+        if (assurance.nextLevel === "aal2" && assurance.nextLevel !== assurance.currentLevel) {
+          return;
+        }
         const res = await getCurrentUser();
         if (res) setUser(toUserShape(res));
       } catch (e) {
